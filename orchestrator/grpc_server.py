@@ -6,10 +6,12 @@ Implements StartCheckout RPC which drives the full SAGA lifecycle:
   - Forward execution: reserve stock per item, charge payment, mark COMPLETED
   - On forward failure: transition to COMPENSATING and run compensation in reverse
   - Compensation retries indefinitely with exponential backoff
+  - Circuit breaker errors propagate immediately out of retry_forward and trigger compensation
 """
 import asyncio
 import json
 import logging
+import random
 
 import grpc
 import grpc.aio
@@ -57,6 +59,48 @@ async def retry_forever(fn, base: float = 0.5, cap: float = 30.0) -> dict:
         delay = min(cap, base * (2 ** attempt))
         await asyncio.sleep(delay)
         attempt += 1
+
+
+# ---------------------------------------------------------------------------
+# retry_forward — bounded retry for forward SAGA steps (max 3 attempts)
+# ---------------------------------------------------------------------------
+
+async def retry_forward(fn, max_attempts: int = 3, base: float = 0.5, cap: float = 30.0) -> dict:
+    """
+    Retry async callable *fn* up to max_attempts times for forward SAGA steps.
+
+    Uses full-jitter exponential backoff between attempts.
+    CircuitBreakerError propagates immediately — never retried.
+
+    Args:
+        fn:           Async callable with no arguments returning {"success": bool, ...}.
+        max_attempts: Maximum number of attempts before returning failure (default 3).
+        base:         Initial backoff in seconds (default 0.5).
+        cap:          Maximum backoff in seconds (default 30.0).
+
+    Returns:
+        The first successful result dict, or the last failure dict if all attempts exhausted.
+
+    Raises:
+        CircuitBreakerError: If the circuit breaker is open — propagated immediately.
+    """
+    from circuitbreaker import CircuitBreakerError
+    last_result = {"success": False, "error_message": "max retries exceeded"}
+    for attempt in range(max_attempts):
+        try:
+            result = await fn()
+            if result.get("success"):
+                return result
+            last_result = result
+        except CircuitBreakerError:
+            raise  # breaker open -- propagate immediately, never retry
+        except Exception as exc:
+            last_result = {"success": False, "error_message": str(exc)}
+        if attempt < max_attempts - 1:
+            delay = min(cap, base * (2 ** attempt))
+            jitter = random.uniform(0, delay)
+            await asyncio.sleep(jitter)
+    return last_result
 
 
 # ---------------------------------------------------------------------------
@@ -131,11 +175,12 @@ async def run_checkout(
     order_id, returns the stored result without re-executing.
 
     Forward steps:
-      1. Reserve stock for each item.
-      2. Charge payment.
+      1. Reserve stock for each item (bounded retry via retry_forward, max 3 attempts).
+      2. Charge payment (bounded retry via retry_forward, max 3 attempts).
       3. Mark COMPLETED.
 
-    On any forward failure, transitions to COMPENSATING and calls run_compensation().
+    On any forward failure or CircuitBreakerError, transitions to COMPENSATING
+    and calls run_compensation().
 
     Args:
         db:         redis.asyncio client.
@@ -147,6 +192,8 @@ async def run_checkout(
     Returns:
         {"success": bool, "error_message": str}
     """
+    from circuitbreaker import CircuitBreakerError
+
     saga_key = f"saga:{order_id}"
 
     # --- Exactly-once check (SAGA-06) ---
@@ -174,41 +221,58 @@ async def run_checkout(
             return {"success": False, "error_message": existing.get("error_message", "")}
         return {"success": False, "error_message": "checkout already in progress"}
 
-    # --- Forward execution ---
+    # --- Forward execution (bounded retry; CircuitBreakerError triggers compensation) ---
+    try:
+        # Step 1: Reserve stock for each item
+        for item in items:
+            item_id = item["item_id"]
+            quantity = item["quantity"]
+            result = await retry_forward(
+                lambda iid=item_id, qty=quantity: reserve_stock(
+                    iid, qty, f"saga:{order_id}:step:reserve:{iid}"
+                )
+            )
+            if not result.get("success"):
+                error_msg = result.get("error_message", "stock reservation failed")
+                await set_saga_error(db, order_id, error_msg)
+                await transition_state(db, saga_key, "STARTED", "COMPENSATING")
+                saga = await get_saga(db, order_id)
+                await run_compensation(db, saga)
+                return {"success": False, "error_message": error_msg}
 
-    # Step 1: Reserve stock for each item
-    for item in items:
-        item_id = item["item_id"]
-        quantity = item["quantity"]
-        result = await reserve_stock(item_id, quantity, f"saga:{order_id}:step:reserve:{item_id}")
+        # All stock reservations succeeded
+        await transition_state(db, saga_key, "STARTED", "STOCK_RESERVED", "stock_reserved", "1")
+
+        # Step 2: Charge payment
+        result = await retry_forward(
+            lambda: charge_payment(user_id, total_cost, f"saga:{order_id}:step:charge")
+        )
         if not result.get("success"):
-            error_msg = result.get("error_message", "stock reservation failed")
+            error_msg = result.get("error_message", "payment charge failed")
             await set_saga_error(db, order_id, error_msg)
-            await transition_state(db, saga_key, "STARTED", "COMPENSATING")
+            await transition_state(db, saga_key, "STOCK_RESERVED", "COMPENSATING")
             saga = await get_saga(db, order_id)
             await run_compensation(db, saga)
             return {"success": False, "error_message": error_msg}
 
-    # All stock reservations succeeded
-    await transition_state(db, saga_key, "STARTED", "STOCK_RESERVED", "stock_reserved", "1")
+        # Payment succeeded
+        await transition_state(db, saga_key, "STOCK_RESERVED", "PAYMENT_CHARGED", "payment_charged", "1")
 
-    # Step 2: Charge payment
-    result = await charge_payment(user_id, total_cost, f"saga:{order_id}:step:charge")
-    if not result.get("success"):
-        error_msg = result.get("error_message", "payment charge failed")
+        # Step 3: Mark COMPLETED
+        await transition_state(db, saga_key, "PAYMENT_CHARGED", "COMPLETED")
+
+        return {"success": True, "error_message": ""}
+
+    except CircuitBreakerError as exc:
+        error_msg = f"service unavailable: {exc}"
         await set_saga_error(db, order_id, error_msg)
-        await transition_state(db, saga_key, "STOCK_RESERVED", "COMPENSATING")
+        current_saga = await get_saga(db, order_id)
+        current_state = current_saga.get("state", "STARTED") if current_saga else "STARTED"
+        if current_state not in ("COMPLETED", "FAILED", "COMPENSATING"):
+            await transition_state(db, saga_key, current_state, "COMPENSATING")
         saga = await get_saga(db, order_id)
         await run_compensation(db, saga)
         return {"success": False, "error_message": error_msg}
-
-    # Payment succeeded
-    await transition_state(db, saga_key, "STOCK_RESERVED", "PAYMENT_CHARGED", "payment_charged", "1")
-
-    # Step 3: Mark COMPLETED
-    await transition_state(db, saga_key, "PAYMENT_CHARGED", "COMPLETED")
-
-    return {"success": True, "error_message": ""}
 
 
 # ---------------------------------------------------------------------------
