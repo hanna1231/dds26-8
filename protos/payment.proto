@@ -1,0 +1,35 @@
+syntax = "proto3";
+package payment;
+
+service PaymentService {
+  rpc ChargePayment(ChargePaymentRequest) returns (PaymentResponse);
+  rpc RefundPayment(RefundPaymentRequest) returns (PaymentResponse);
+  rpc CheckPayment(CheckPaymentRequest) returns (CheckPaymentResponse);
+}
+
+message ChargePaymentRequest {
+  string user_id = 1;
+  int32 amount = 2;
+  string idempotency_key = 3;
+}
+
+message RefundPaymentRequest {
+  string user_id = 1;
+  int32 amount = 2;
+  string idempotency_key = 3;
+}
+
+message CheckPaymentRequest {
+  string user_id = 1;
+}
+
+message PaymentResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message CheckPaymentResponse {
+  bool success = 1;
+  string error_message = 2;
+  int32 credit = 3;
+}

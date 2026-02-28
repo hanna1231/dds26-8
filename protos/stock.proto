@@ -1,0 +1,36 @@
+syntax = "proto3";
+package stock;
+
+service StockService {
+  rpc ReserveStock(ReserveStockRequest) returns (StockResponse);
+  rpc ReleaseStock(ReleaseStockRequest) returns (StockResponse);
+  rpc CheckStock(CheckStockRequest) returns (CheckStockResponse);
+}
+
+message ReserveStockRequest {
+  string item_id = 1;
+  int32 quantity = 2;
+  string idempotency_key = 3;
+}
+
+message ReleaseStockRequest {
+  string item_id = 1;
+  int32 quantity = 2;
+  string idempotency_key = 3;
+}
+
+message CheckStockRequest {
+  string item_id = 1;
+}
+
+message StockResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message CheckStockResponse {
+  bool success = 1;
+  string error_message = 2;
+  int32 stock = 3;
+  int32 price = 4;
+}
