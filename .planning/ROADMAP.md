@@ -82,11 +82,11 @@ Plans:
   2. On orchestrator restart, all non-terminal SAGAs are scanned and either driven to completion or compensated (no SAGA left stranded in a partial state)
   3. After a container kill and recovery cycle, the database state is consistent: no phantom stock deductions or duplicate charges
   4. When Stock or Payment is unavailable, the circuit breaker prevents the orchestrator from flooding it with retries and returns a clean failure response
-**Plans**: TBD
+**Plans**: 2 plans (Wave 1 → Wave 2, sequential)
 
 Plans:
-- [ ] 04-01: Implement orchestrator startup scan (resume or compensate all non-terminal SAGAs)
-- [ ] 04-02: Add circuit breaker to orchestrator gRPC calls; verify consistent state after kill-recovery cycle
+- [ ] 04-01: Add circuit breakers, bounded forward retry, and SAGA startup recovery to orchestrator (Wave 1)
+- [ ] 04-02: Write fault tolerance tests for circuit breaker, recovery scanner, and consistency (Wave 2)
 
 ### Phase 5: Event-Driven Architecture
 **Goal**: SAGA lifecycle events are published to Redis Streams with consumer groups; compensation retries are queued reliably for at-least-once processing
