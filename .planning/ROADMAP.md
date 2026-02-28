@@ -47,12 +47,12 @@ Plans:
   2. Stock and Payment each run a gRPC server on port 50051 alongside the existing HTTP server on port 5000
   3. The SAGA orchestrator calls Stock and Payment exclusively via gRPC (no HTTP inter-service calls remain on the checkout path)
   4. Every gRPC mutation RPC includes an `idempotency_key` field in its proto definition and accepts it at runtime
-**Plans**: TBD
+**Plans**: 3 plans (Wave 1 → Wave 2 → Wave 3, sequential)
 
 Plans:
-- [ ] 02-01: Define proto files for StockService and PaymentService; generate Python stubs
-- [ ] 02-02: Add gRPC servers to Stock and Payment services (dual-server: HTTP + gRPC)
-- [ ] 02-03: Wire SAGA orchestrator to call Stock and Payment via gRPC with idempotency keys
+- [ ] 02-01: Define proto files for StockService and PaymentService; generate Python stubs; add grpcio dependencies (Wave 1)
+- [ ] 02-02: Implement gRPC servicers with Lua idempotency; add dual-server startup to Stock and Payment (Wave 2)
+- [ ] 02-03: Create thin gRPC client module in orchestrator/ for Phase 3 SAGA orchestrator (Wave 3)
 
 ### Phase 3: SAGA Orchestration
 **Goal**: A dedicated SAGA orchestrator coordinates checkout with Redis-persisted state, idempotent service operations, and retry-until-success compensation
