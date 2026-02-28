@@ -17,11 +17,13 @@ services:
     image: order:latest
     environment:
       - GATEWAY_URL=http://gateway:80
+      - ORCHESTRATOR_GRPC_ADDR=orchestrator-service:50053
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
     env_file:
       - env/order_redis.env
     depends_on:
       - order-db
+      - orchestrator-service
 
   order-db:
     image: redis:7.2-bookworm
@@ -50,5 +52,23 @@ services:
       - payment-db
 
   payment-db:
+    image: redis:7.2-bookworm
+    command: redis-server --requirepass redis --maxmemory 512mb
+
+  orchestrator-service:
+    build: ./orchestrator
+    image: orchestrator:latest
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
+    environment:
+      - STOCK_GRPC_ADDR=stock-service:50051
+      - PAYMENT_GRPC_ADDR=payment-service:50051
+    env_file:
+      - env/orchestrator_redis.env
+    depends_on:
+      - orchestrator-db
+      - stock-service
+      - payment-service
+
+  orchestrator-db:
     image: redis:7.2-bookworm
     command: redis-server --requirepass redis --maxmemory 512mb
