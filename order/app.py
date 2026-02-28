@@ -5,34 +5,45 @@ from collections import defaultdict
 
 import redis.asyncio as redis
 import httpx
+import grpc.aio
 
 from msgspec import msgpack, Struct
 from quart import Quart, jsonify, abort, Response
+
+from orchestrator_pb2 import CheckoutRequest, LineItem
+from orchestrator_pb2_grpc import OrchestratorServiceStub
 
 
 DB_ERROR_STR = "DB error"
 REQ_ERROR_STR = "Requests error"
 
 GATEWAY_URL = os.environ['GATEWAY_URL']
+ORCHESTRATOR_ADDR = os.environ.get("ORCHESTRATOR_GRPC_ADDR", "orchestrator-service:50053")
 
 app = Quart("order-service")
 
 db: redis.Redis = None
 http_client: httpx.AsyncClient = None
+_orchestrator_channel = None
+_orchestrator_stub: OrchestratorServiceStub = None
 
 
 @app.before_serving
 async def startup():
-    global db, http_client
+    global db, http_client, _orchestrator_channel, _orchestrator_stub
     db = redis.Redis(host=os.environ['REDIS_HOST'],
                      port=int(os.environ['REDIS_PORT']),
                      password=os.environ['REDIS_PASSWORD'],
                      db=int(os.environ['REDIS_DB']))
     http_client = httpx.AsyncClient()
+    _orchestrator_channel = grpc.aio.insecure_channel(ORCHESTRATOR_ADDR)
+    _orchestrator_stub = OrchestratorServiceStub(_orchestrator_channel)
 
 
 @app.after_serving
 async def shutdown():
+    if _orchestrator_channel:
+        await _orchestrator_channel.close()
     await db.aclose()
     await http_client.aclose()
 
@@ -110,15 +121,6 @@ async def find_order(order_id: str):
     )
 
 
-async def send_post_request(url: str):
-    try:
-        response = await http_client.post(url)
-    except httpx.RequestError:
-        abort(400, REQ_ERROR_STR)
-    else:
-        return response
-
-
 async def send_get_request(url: str):
     try:
         response = await http_client.get(url)
@@ -146,39 +148,41 @@ async def add_item(order_id: str, item_id: str, quantity: int):
                     status=200)
 
 
-async def rollback_stock(removed_items: list[tuple[str, int]]):
-    for item_id, quantity in removed_items:
-        await send_post_request(f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}")
-
-
 @app.post('/checkout/<order_id>')
 async def checkout(order_id: str):
     app.logger.debug(f"Checking out {order_id}")
     order_entry: OrderValue = await get_order_from_db(order_id)
-    # get the quantity per item
+
+    # Aggregate items: combine duplicate item_ids
     items_quantities: dict[str, int] = defaultdict(int)
     for item_id, quantity in order_entry.items:
         items_quantities[item_id] += quantity
-    # The removed items will contain the items that we already have successfully subtracted stock from
-    # for rollback purposes.
-    removed_items: list[tuple[str, int]] = []
-    for item_id, quantity in items_quantities.items():
-        stock_reply = await send_post_request(f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}")
-        if stock_reply.status_code != 200:
-            # If one item does not have enough stock we need to rollback
-            await rollback_stock(removed_items)
-            abort(400, f'Out of stock on item_id: {item_id}')
-        removed_items.append((item_id, quantity))
-    user_reply = await send_post_request(f"{GATEWAY_URL}/payment/pay/{order_entry.user_id}/{order_entry.total_cost}")
-    if user_reply.status_code != 200:
-        # If the user does not have enough credit we need to rollback all the item stock subtractions
-        await rollback_stock(removed_items)
-        abort(400, "User out of credit")
+
+    # Build LineItem list for proto
+    line_items = [LineItem(item_id=item_id, quantity=quantity)
+                  for item_id, quantity in items_quantities.items()]
+
+    # Single gRPC call to orchestrator — SAGA handles everything
+    resp = await _orchestrator_stub.StartCheckout(
+        CheckoutRequest(
+            order_id=order_id,
+            user_id=order_entry.user_id,
+            items=line_items,
+            total_cost=order_entry.total_cost,
+        ),
+        timeout=60.0,  # SAGA is synchronous — longer timeout needed
+    )
+
+    if not resp.success:
+        abort(400, resp.error_message)
+
+    # Mark order as paid in Order's own Redis
     order_entry.paid = True
     try:
         await db.set(order_id, msgpack.encode(order_entry))
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
+
     app.logger.debug("Checkout successful")
     return Response("Checkout successful", status=200)
 
