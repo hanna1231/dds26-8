@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-02-28T08:05:06.755Z"
+last_updated: "2026-02-28T08:53:04Z"
 progress:
-  total_phases: 1
+  total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # Project State
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-27)
 
 **Core value:** Checkout transactions must never lose money or item counts — consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 1 — Async Foundation
+**Current focus:** Phase 2 — gRPC Communication
 
 ## Current Position
 
-Phase: 1 of 7 (Async Foundation)
-Plan: 3 of 3 in current phase (all plans complete)
-Status: Phase complete
-Last activity: 2026-02-28 — Completed 01-01 (Order async migration to Quart+Uvicorn+redis.asyncio+httpx; all 3 services uvicorn)
+Phase: 2 of 7 (gRPC Communication)
+Plan: 1 of 4 in current phase (plan 01 complete)
+Status: In progress
+Last activity: 2026-02-28 — Completed 02-01 (proto3 contracts for StockService/PaymentService + generated Python stubs into stock/, payment/, orchestrator/)
 
-Progress: [██████████] 100% (3/3 plans in phase 1 complete)
+Progress: [███░░░░░░░] 57% (4/7 phases in progress)
 
 ## Performance Metrics
 
@@ -47,6 +47,7 @@ Progress: [██████████] 100% (3/3 plans in phase 1 complete)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02-grpc-communication P01 | 2 | 2 tasks | 18 files |
 | Phase 01-async-foundation P03 | 3 | 1 tasks | 2 files |
 | Phase 01-async-foundation P02 | 2 | 1 tasks | 2 files |
 | Phase 01-async-foundation P01 | 2 | 2 tasks | 3 files |
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 01-async-foundation 01-01]: Module-level globals (db=None, http_client=None) initialized in before_serving hook — correct pattern for Uvicorn multi-worker lifecycle
 - [Phase 01-async-foundation 01-01]: abort() does not need await in Quart — raises HTTPException synchronously same as Flask
 - [Phase 01-async-foundation 01-01]: db.aclose() required for redis.asyncio (not .close())
+- [Phase 02-grpc-communication 02-01]: grpcio-tools installed via pip3 (system Python); pip maps to pipx venv where grpc_tools not accessible
+- [Phase 02-grpc-communication 02-01]: Generated stubs use absolute imports (import stock_pb2) — correct for services run from their own directory, not installed packages
+- [Phase 02-grpc-communication 02-01]: Generated stubs committed to repo; no runtime codegen needed in containers
 
 ### Pending Todos
 
@@ -81,5 +85,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-28
-Stopped at: Completed 01-01-PLAN.md (Order async migration); all Phase 1 plans now complete
+Stopped at: Completed 02-01-PLAN.md (proto3 contracts + gRPC stubs); Phase 2 plan 1 of 4 complete
 Resume file: None

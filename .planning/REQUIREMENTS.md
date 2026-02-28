@@ -15,10 +15,10 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### gRPC Communication
 
-- [ ] **GRPC-01**: Proto definitions exist for Stock and Payment service operations used by the orchestrator
+- [x] **GRPC-01**: Proto definitions exist for Stock and Payment service operations used by the orchestrator
 - [ ] **GRPC-02**: Stock and Payment services expose gRPC server alongside HTTP (dual-server: HTTP :5000, gRPC :50051)
 - [ ] **GRPC-03**: SAGA orchestrator communicates with Stock and Payment via gRPC (not HTTP)
-- [ ] **GRPC-04**: gRPC calls include idempotency_key field in all mutation requests
+- [x] **GRPC-04**: gRPC calls include idempotency_key field in all mutation requests
 
 ### SAGA Orchestration
 
@@ -109,10 +109,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ASYNC-01 | Phase 1 | Complete |
 | ASYNC-02 | Phase 1 | Complete |
 | ASYNC-03 | Phase 1 | Complete |
-| GRPC-01 | Phase 2 | Pending |
+| GRPC-01 | Phase 2 | Complete |
 | GRPC-02 | Phase 2 | Pending |
 | GRPC-03 | Phase 2 | Pending |
-| GRPC-04 | Phase 2 | Pending |
+| GRPC-04 | Phase 2 | Complete |
 | SAGA-01 | Phase 3 | Pending |
 | SAGA-02 | Phase 3 | Pending |
 | SAGA-03 | Phase 3 | Pending |
