@@ -1,7 +1,9 @@
 import os
 
 import grpc.aio
+from circuitbreaker import CircuitBreakerError  # re-exported for callers
 
+from circuit import stock_breaker, payment_breaker
 from stock_pb2 import ReserveStockRequest, ReleaseStockRequest, CheckStockRequest
 from stock_pb2_grpc import StockServiceStub
 from payment_pb2 import ChargePaymentRequest, RefundPaymentRequest, CheckPaymentRequest
@@ -49,6 +51,7 @@ async def close_grpc_clients() -> None:
 # Stock wrappers
 # ---------------------------------------------------------------------------
 
+@stock_breaker
 async def reserve_stock(item_id: str, quantity: int, idempotency_key: str) -> dict:
     resp = await _stock_stub.ReserveStock(
         ReserveStockRequest(item_id=item_id, quantity=quantity, idempotency_key=idempotency_key),
@@ -57,6 +60,7 @@ async def reserve_stock(item_id: str, quantity: int, idempotency_key: str) -> di
     return {"success": resp.success, "error_message": resp.error_message}
 
 
+@stock_breaker
 async def release_stock(item_id: str, quantity: int, idempotency_key: str) -> dict:
     resp = await _stock_stub.ReleaseStock(
         ReleaseStockRequest(item_id=item_id, quantity=quantity, idempotency_key=idempotency_key),
@@ -65,6 +69,7 @@ async def release_stock(item_id: str, quantity: int, idempotency_key: str) -> di
     return {"success": resp.success, "error_message": resp.error_message}
 
 
+@stock_breaker
 async def check_stock(item_id: str) -> dict:
     resp = await _stock_stub.CheckStock(
         CheckStockRequest(item_id=item_id),
@@ -82,6 +87,7 @@ async def check_stock(item_id: str) -> dict:
 # Payment wrappers
 # ---------------------------------------------------------------------------
 
+@payment_breaker
 async def charge_payment(user_id: str, amount: int, idempotency_key: str) -> dict:
     resp = await _payment_stub.ChargePayment(
         ChargePaymentRequest(user_id=user_id, amount=amount, idempotency_key=idempotency_key),
@@ -90,6 +96,7 @@ async def charge_payment(user_id: str, amount: int, idempotency_key: str) -> dic
     return {"success": resp.success, "error_message": resp.error_message}
 
 
+@payment_breaker
 async def refund_payment(user_id: str, amount: int, idempotency_key: str) -> dict:
     resp = await _payment_stub.RefundPayment(
         RefundPaymentRequest(user_id=user_id, amount=amount, idempotency_key=idempotency_key),
@@ -98,6 +105,7 @@ async def refund_payment(user_id: str, amount: int, idempotency_key: str) -> dic
     return {"success": resp.success, "error_message": resp.error_message}
 
 
+@payment_breaker
 async def check_payment(user_id: str) -> dict:
     resp = await _payment_stub.CheckPayment(
         CheckPaymentRequest(user_id=user_id),
