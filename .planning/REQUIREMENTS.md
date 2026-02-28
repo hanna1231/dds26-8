@@ -45,9 +45,9 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Event-Driven Architecture
 
-- [ ] **EVENT-01**: Redis Streams used for SAGA lifecycle events (checkout started, stock reserved, payment completed, etc.)
-- [ ] **EVENT-02**: Consumer groups configured for reliable event processing with at-least-once delivery
-- [ ] **EVENT-03**: SAGA orchestrator publishes events to streams and consumes responses
+- [x] **EVENT-01**: Redis Streams used for SAGA lifecycle events (checkout started, stock reserved, payment completed, etc.)
+- [x] **EVENT-02**: Consumer groups configured for reliable event processing with at-least-once delivery
+- [x] **EVENT-03**: SAGA orchestrator publishes events to streams and consumes responses
 
 ### Infrastructure
 
@@ -127,9 +127,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FAULT-02 | Phase 4 | Complete |
 | FAULT-03 | Phase 4 | Complete |
 | FAULT-04 | Phase 4 | Complete |
-| EVENT-01 | Phase 5 | Pending |
-| EVENT-02 | Phase 5 | Pending |
-| EVENT-03 | Phase 5 | Pending |
+| EVENT-01 | Phase 5 | Complete |
+| EVENT-02 | Phase 5 | Complete |
+| EVENT-03 | Phase 5 | Complete |
 | INFRA-01 | Phase 6 | Pending |
 | INFRA-02 | Phase 6 | Pending |
 | INFRA-03 | Phase 6 | Pending |

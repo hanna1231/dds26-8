@@ -98,8 +98,11 @@ Plans:
   3. The SAGA orchestrator both publishes events and consumes responses from Redis Streams; event processing does not block the checkout path
 **Plans**: TBD
 
+**Plans**: 2 plans (Wave 1 → Wave 2, sequential)
+
 Plans:
-- [ ] 05-01: Integrate Redis Streams into orchestrator for SAGA lifecycle events and compensation retry queue
+- [ ] 05-01: Create events.py and consumers.py modules; wire event publishing into grpc_server.py and consumer lifecycle into app.py (Wave 1)
+- [ ] 05-02: Write event-driven architecture tests for EVENT-01, EVENT-02, EVENT-03 (Wave 2)
 
 ### Phase 6: Infrastructure
 **Goal**: Redis Cluster provides high availability per service domain; Kubernetes HPA scales domain service replicas; the system runs within the 20 CPU benchmark constraint
@@ -146,6 +149,6 @@ Note: Phase 5 depends on Phase 3 (not Phase 4); Phases 4 and 5 can proceed in ei
 | 2. gRPC Communication | 4/4 | Complete   | 2026-02-28 |
 | 3. SAGA Orchestration | 4/4 | Complete   | 2026-02-28 |
 | 4. Fault Tolerance | 1/2 | In Progress|  |
-| 5. Event-Driven Architecture | 0/1 | Not started | - |
+| 5. Event-Driven Architecture | 1/2 | In Progress|  |
 | 6. Infrastructure | 0/3 | Not started | - |
 | 7. Validation and Delivery | 0/3 | Not started | - |
