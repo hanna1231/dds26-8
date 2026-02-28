@@ -179,3 +179,10 @@ async def clean_orchestrator_db(orchestrator_db):
     await orchestrator_db.flushdb()
     yield
     # No cleanup needed after — next test will flush at start
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_docker: marks tests that need Docker Compose running (deselect with '-m \"not requires_docker\"')",
+    )
