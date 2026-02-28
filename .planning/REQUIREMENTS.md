@@ -38,10 +38,10 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Fault Tolerance
 
-- [ ] **FAULT-01**: System recovers when any single container (service or database) is killed
-- [ ] **FAULT-02**: On orchestrator startup, incomplete SAGAs are scanned and resolved (complete or compensate)
-- [ ] **FAULT-03**: System remains consistent after container kill + recovery cycle
-- [ ] **FAULT-04**: Circuit breaker prevents cascade failures when downstream services are unavailable
+- [x] **FAULT-01**: System recovers when any single container (service or database) is killed
+- [x] **FAULT-02**: On orchestrator startup, incomplete SAGAs are scanned and resolved (complete or compensate)
+- [x] **FAULT-03**: System remains consistent after container kill + recovery cycle
+- [x] **FAULT-04**: Circuit breaker prevents cascade failures when downstream services are unavailable
 
 ### Event-Driven Architecture
 
@@ -123,10 +123,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | IDMP-01 | Phase 3 | Complete |
 | IDMP-02 | Phase 3 | Complete |
 | IDMP-03 | Phase 3 | Complete |
-| FAULT-01 | Phase 4 | Pending |
-| FAULT-02 | Phase 4 | Pending |
-| FAULT-03 | Phase 4 | Pending |
-| FAULT-04 | Phase 4 | Pending |
+| FAULT-01 | Phase 4 | Complete |
+| FAULT-02 | Phase 4 | Complete |
+| FAULT-03 | Phase 4 | Complete |
+| FAULT-04 | Phase 4 | Complete |
 | EVENT-01 | Phase 5 | Pending |
 | EVENT-02 | Phase 5 | Pending |
 | EVENT-03 | Phase 5 | Pending |
