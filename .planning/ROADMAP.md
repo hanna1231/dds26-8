@@ -12,7 +12,7 @@ Starting from an existing Flask+Redis checkout system (Order, Stock, Payment ser
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Async Foundation** - Migrate all three services from Flask+Gunicorn to Quart+Uvicorn with async Redis
+- [x] **Phase 1: Async Foundation** - Migrate all three services from Flask+Gunicorn to Quart+Uvicorn with async Redis (completed 2026-02-28)
 - [ ] **Phase 2: gRPC Communication** - Add gRPC servers to Stock and Payment; define proto contracts with idempotency keys
 - [ ] **Phase 3: SAGA Orchestration** - Build the SAGA orchestrator with Redis-persisted state, idempotent service operations, and compensation
 - [ ] **Phase 4: Fault Tolerance** - Add crash recovery, circuit breakers, and verified consistency under container-kill scenarios
@@ -142,7 +142,7 @@ Note: Phase 5 depends on Phase 3 (not Phase 4); Phases 4 and 5 can proceed in ei
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Async Foundation | 0/3 | Not started | - |
+| 1. Async Foundation | 3/3 | Complete   | 2026-02-28 |
 | 2. gRPC Communication | 0/3 | Not started | - |
 | 3. SAGA Orchestration | 0/4 | Not started | - |
 | 4. Fault Tolerance | 0/2 | Not started | - |

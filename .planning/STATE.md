@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-02-28T08:00:34.123Z"
+progress:
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 2
+---
+
 # Project State
 
 ## Project Reference
@@ -10,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 1 of 7 (Async Foundation)
-Plan: 0 of 3 in current phase
-Status: Ready to execute
-Last activity: 2026-02-28 — Phase 1 plans created (3 plans, all Wave 1 parallel); ready to execute
+Plan: 1 of 3 in current phase (01-01 and 01-02 may run in parallel; 01-03 complete)
+Status: In progress
+Last activity: 2026-02-28 — Completed 01-03 (Payment async migration to Quart+Uvicorn+redis.asyncio)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [░░░░░░░░░░] 0% (1/3 plans in phase 1 complete)
 
 ## Performance Metrics
 
@@ -34,6 +47,8 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01-async-foundation P03 | 3 | 1 tasks | 2 files |
+| Phase 01-async-foundation P02 | 2 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -45,6 +60,9 @@ Recent decisions affecting current work:
 - Roadmap: Redis Streams chosen over Kafka — same redis-py client, no new infrastructure, fits 20 CPU budget
 - Roadmap: SAGA orchestrator runs as single replica (avoids split-brain); domain services scale horizontally via HPA
 - Roadmap: Phases 4 (Fault Tolerance) and 5 (Event-Driven) both depend on Phase 3; either can follow Phase 3
+- [Phase 01-async-foundation]: redis.asyncio (redis-py bundled) used over aioredis for Payment async Redis — simpler, same API
+- [Phase 01-async-foundation]: Payment lifecycle: before_serving/after_serving hooks replace atexit for async Redis client management
+- [Phase 01-async-foundation]: Stock service migration folded into 01-01 commit during parallel phase execution; all success criteria verified against current file state
 
 ### Pending Todos
 

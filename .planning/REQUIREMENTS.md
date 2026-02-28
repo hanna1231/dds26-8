@@ -9,9 +9,9 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Async Migration
 
-- [ ] **ASYNC-01**: All three services (Order, Stock, Payment) run on Quart+Uvicorn instead of Flask+Gunicorn
-- [ ] **ASYNC-02**: Redis operations use async redis-py client (`redis.asyncio`) with hiredis acceleration
-- [ ] **ASYNC-03**: All existing API endpoints preserve identical routes and response formats after migration
+- [x] **ASYNC-01**: All three services (Order, Stock, Payment) run on Quart+Uvicorn instead of Flask+Gunicorn
+- [x] **ASYNC-02**: Redis operations use async redis-py client (`redis.asyncio`) with hiredis acceleration
+- [x] **ASYNC-03**: All existing API endpoints preserve identical routes and response formats after migration
 
 ### gRPC Communication
 
@@ -106,9 +106,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ASYNC-01 | Phase 1 | Pending |
-| ASYNC-02 | Phase 1 | Pending |
-| ASYNC-03 | Phase 1 | Pending |
+| ASYNC-01 | Phase 1 | Complete |
+| ASYNC-02 | Phase 1 | Complete |
+| ASYNC-03 | Phase 1 | Complete |
 | GRPC-01 | Phase 2 | Pending |
 | GRPC-02 | Phase 2 | Pending |
 | GRPC-03 | Phase 2 | Pending |
