@@ -23,9 +23,9 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 2 of 7 (gRPC Communication)
-Plan: 2 of 4 in current phase (plan 02 complete)
+Plan: 3 of 4 in current phase (plan 03 complete)
 Status: In progress
-Last activity: 2026-02-28 — Completed 02-02 (gRPC servicers for Stock/Payment with Lua idempotency + dual HTTP+gRPC server startup)
+Last activity: 2026-02-28 — Completed 02-03 (orchestrator gRPC client module with six async wrapper functions)
 
 Progress: [███░░░░░░░] 57% (4/7 phases in progress)
 
@@ -47,6 +47,7 @@ Progress: [███░░░░░░░] 57% (4/7 phases in progress)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02-grpc-communication P03 | 1 | 1 tasks | 2 files |
 | Phase 02-grpc-communication P01 | 2 | 2 tasks | 18 files |
 | Phase 01-async-foundation P03 | 3 | 1 tasks | 2 files |
 | Phase 01-async-foundation P02 | 2 | 1 tasks | 2 files |
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase 02-grpc-communication 02-02]: StockValue/UserValue redefined in grpc_server.py (not imported from app.py) to avoid circular import risk
 - [Phase 02-grpc-communication 02-02]: Idempotency — 30s processing lock TTL, 86400s committed result TTL; single Lua eval eliminates TOCTOU
 - [Phase 02-grpc-communication 02-02]: Business errors (not found, insufficient) in response fields only — SAGA orchestrator inspects success/error_message, never gRPC status codes
+- [Phase 02-grpc-communication 02-03]: gRPC transport errors (grpc.aio.AioRpcError) not caught in client.py — Phase 4 adds circuit breaker at orchestrator level
+- [Phase 02-grpc-communication 02-03]: init_grpc_clients() accepts optional address overrides for test-time injection without env var manipulation
 
 ### Pending Todos
 
@@ -88,5 +91,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-28T09:03:00Z
-Stopped at: Completed 02-02-PLAN.md (gRPC servicers + dual-server startup); Phase 2 plan 2 of 4 complete
+Stopped at: Completed 02-03-PLAN.md (orchestrator gRPC client module); Phase 2 plan 3 of 4 complete
 Resume file: None
