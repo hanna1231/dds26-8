@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-02-28T13:14:10.421Z"
+last_updated: "2026-02-28T13:18:50Z"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 3 of 7 (SAGA Orchestration)
-Plan: 3 of 4 in current phase (plan 03 complete)
-Status: Phase 3 in progress
-Last activity: 2026-02-28 — Completed 03-03 (Wire Order /checkout to orchestrator gRPC + Docker Compose infra)
+Plan: 4 of 4 in current phase (plan 04 complete — phase DONE)
+Status: Phase 3 complete
+Last activity: 2026-02-28 — Completed 03-04 (SAGA Integration Tests)
 
-Progress: [█████░░░░░] 58% (phase 3 plan 3/4 done)
+Progress: [██████░░░░] 65% (phase 3 plan 4/4 done)
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [█████░░░░░] 58% (phase 3 plan 3/4 done)
 | Phase 03-saga-orchestration P01 | 93 | 2 tasks | 8 files |
 | Phase 03-saga-orchestration P02 | 2 | 2 tasks | 4 files |
 | Phase 03-saga-orchestration P03 | 2 | 2 tasks | 4 files |
+| Phase 03-saga-orchestration P04 | 176 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,10 @@ Recent decisions affecting current work:
 - [Phase 03-saga-orchestration]: orchestrator-service runs --workers 1 (single replica to avoid SAGA split-brain per roadmap decision)
 - [Phase 03-saga-orchestration]: orchestrator command is uvicorn app:app (Quart app manages gRPC server as background task)
 - [Phase 03-saga-orchestration]: send_post_request removed from order/app.py — SAGA owns compensation; httpx kept for addItem stock lookup
+- [Phase 03-saga-orchestration 03-04]: orchestrator_db uses Redis db=3 to avoid collision with stock/payment (both db=0 in tests)
+- [Phase 03-saga-orchestration 03-04]: Orchestrator gRPC server started manually via grpc.aio.server() in conftest — not serve_grpc() which blocks on wait_for_termination()
+- [Phase 03-saga-orchestration 03-04]: Test 9 patches grpc_server.release_stock + asyncio.sleep to simulate transient gRPC failures without real delays
+- [Phase 03-saga-orchestration 03-04]: Test 10 replays stock/payment operations with same idempotency keys to validate Phase 2 Lua caching prevents double execution
 
 ### Pending Todos
 
@@ -107,6 +112,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28T13:13:11Z
-Stopped at: Completed 03-03-PLAN.md (Wire Order /checkout to orchestrator gRPC + Docker Compose infra); Phase 3 plan 3 of 4 complete
+Last session: 2026-02-28T13:18:50Z
+Stopped at: Completed 03-04-PLAN.md (SAGA Integration Tests); Phase 3 COMPLETE (4/4 plans done)
 Resume file: None

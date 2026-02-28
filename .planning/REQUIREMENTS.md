@@ -32,9 +32,9 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Idempotency & Atomicity
 
-- [ ] **IDMP-01**: Stock subtract/add operations accept idempotency key and skip re-execution if already processed
-- [ ] **IDMP-02**: Payment pay/refund operations accept idempotency key and skip re-execution if already processed
-- [ ] **IDMP-03**: Redis read-modify-write operations use Lua scripts for atomicity (prevent concurrent overselling)
+- [x] **IDMP-01**: Stock subtract/add operations accept idempotency key and skip re-execution if already processed
+- [x] **IDMP-02**: Payment pay/refund operations accept idempotency key and skip re-execution if already processed
+- [x] **IDMP-03**: Redis read-modify-write operations use Lua scripts for atomicity (prevent concurrent overselling)
 
 ### Fault Tolerance
 
@@ -120,9 +120,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAGA-05 | Phase 3 | Complete |
 | SAGA-06 | Phase 3 | Complete |
 | SAGA-07 | Phase 3 | Complete |
-| IDMP-01 | Phase 3 | Pending |
-| IDMP-02 | Phase 3 | Pending |
-| IDMP-03 | Phase 3 | Pending |
+| IDMP-01 | Phase 3 | Complete |
+| IDMP-02 | Phase 3 | Complete |
+| IDMP-03 | Phase 3 | Complete |
 | FAULT-01 | Phase 4 | Pending |
 | FAULT-02 | Phase 4 | Pending |
 | FAULT-03 | Phase 4 | Pending |
