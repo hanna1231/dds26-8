@@ -23,9 +23,9 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 2 of 7 (gRPC Communication)
-Plan: 1 of 4 in current phase (plan 01 complete)
+Plan: 2 of 4 in current phase (plan 02 complete)
 Status: In progress
-Last activity: 2026-02-28 — Completed 02-01 (proto3 contracts for StockService/PaymentService + generated Python stubs into stock/, payment/, orchestrator/)
+Last activity: 2026-02-28 — Completed 02-02 (gRPC servicers for Stock/Payment with Lua idempotency + dual HTTP+gRPC server startup)
 
 Progress: [███░░░░░░░] 57% (4/7 phases in progress)
 
@@ -71,6 +71,9 @@ Recent decisions affecting current work:
 - [Phase 02-grpc-communication 02-01]: grpcio-tools installed via pip3 (system Python); pip maps to pipx venv where grpc_tools not accessible
 - [Phase 02-grpc-communication 02-01]: Generated stubs use absolute imports (import stock_pb2) — correct for services run from their own directory, not installed packages
 - [Phase 02-grpc-communication 02-01]: Generated stubs committed to repo; no runtime codegen needed in containers
+- [Phase 02-grpc-communication 02-02]: StockValue/UserValue redefined in grpc_server.py (not imported from app.py) to avoid circular import risk
+- [Phase 02-grpc-communication 02-02]: Idempotency — 30s processing lock TTL, 86400s committed result TTL; single Lua eval eliminates TOCTOU
+- [Phase 02-grpc-communication 02-02]: Business errors (not found, insufficient) in response fields only — SAGA orchestrator inspects success/error_message, never gRPC status codes
 
 ### Pending Todos
 
@@ -84,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28
-Stopped at: Completed 02-01-PLAN.md (proto3 contracts + gRPC stubs); Phase 2 plan 1 of 4 complete
+Last session: 2026-02-28T09:03:00Z
+Stopped at: Completed 02-02-PLAN.md (gRPC servicers + dual-server startup); Phase 2 plan 2 of 4 complete
 Resume file: None
