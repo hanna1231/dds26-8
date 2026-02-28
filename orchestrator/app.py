@@ -5,9 +5,12 @@ from quart import Quart, jsonify
 from grpc_server import serve_grpc, stop_grpc_server
 from client import init_grpc_clients, close_grpc_clients
 from recovery import recover_incomplete_sagas
+from consumers import setup_consumer_groups, compensation_consumer, audit_consumer, init_stop_event
+from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
 
 app = Quart("orchestrator-service")
 db: redis.Redis = None
+_stop_event = None
 
 
 @app.before_serving
@@ -21,11 +24,17 @@ async def startup():
     )
     await init_grpc_clients()
     await recover_incomplete_sagas(db)
+    await setup_consumer_groups(db)
+    _stop_event = init_stop_event()
     app.add_background_task(serve_grpc, db)
+    app.add_background_task(compensation_consumer, db)
+    app.add_background_task(audit_consumer, db)
 
 
 @app.after_serving
 async def shutdown():
+    if _stop_event:
+        _stop_event.set()
     await stop_grpc_server()
     await close_grpc_clients()
     await db.aclose()
@@ -33,7 +42,25 @@ async def shutdown():
 
 @app.get('/health')
 async def health():
-    return jsonify({"status": "ok"})
+    lag_info = {}
+    try:
+        groups = await db.xinfo_groups(STREAM_NAME)
+        lag_info = {g["name"]: g.get("lag", "N/A") for g in groups}
+    except Exception:
+        pass
+
+    dead_letter_count = 0
+    try:
+        dead_letter_count = await db.xlen(DEAD_LETTERS_STREAM)
+    except Exception:
+        pass
+
+    return jsonify({
+        "status": "ok",
+        "consumer_lag": lag_info,
+        "dead_letters": dead_letter_count,
+        "dropped_events": get_dropped_events(),
+    })
 
 
 if __name__ == '__main__':
