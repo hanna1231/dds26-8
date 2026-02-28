@@ -31,12 +31,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. All existing HTTP routes return identical responses before and after migration (no API contract changes)
   3. Redis operations use `redis.asyncio` client with hiredis; no synchronous Redis calls remain in any service
   4. Existing integration tests pass against the migrated services
-**Plans**: TBD
+**Plans**: 3 plans (all Wave 1, parallel)
 
 Plans:
-- [ ] 01-01: Migrate Order service to Quart+Uvicorn with async Redis
-- [ ] 01-02: Migrate Stock service to Quart+Uvicorn with async Redis
-- [ ] 01-03: Migrate Payment service to Quart+Uvicorn with async Redis
+- [ ] 01-01: Migrate Order service to Quart+Uvicorn with async Redis + httpx; update docker-compose.yml for all services (Wave 1)
+- [ ] 01-02: Migrate Stock service to Quart+Uvicorn with async Redis (Wave 1)
+- [ ] 01-03: Migrate Payment service to Quart+Uvicorn with async Redis (Wave 1)
 
 ### Phase 2: gRPC Communication
 **Goal**: Stock and Payment services expose gRPC alongside HTTP; all inter-service mutation calls carry idempotency keys via gRPC
