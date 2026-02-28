@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 
 ## Current Position
 
-Phase: 3 of 7 (SAGA Orchestration)
-Plan: 4 of 4 in current phase (plan 04 complete — phase DONE)
-Status: Phase 3 complete
-Last activity: 2026-02-28 — Completed 03-04 (SAGA Integration Tests)
+Phase: 4 of 7 (Fault Tolerance)
+Plan: 1 of 1 in current phase (plan 01 complete)
+Status: Phase 4 in progress (1/1 plans done)
+Last activity: 2026-02-28 — Completed 04-01 (Circuit Breakers and SAGA Recovery)
 
-Progress: [██████░░░░] 65% (phase 3 plan 4/4 done)
+Progress: [███████░░░] 72% (phase 4 plan 1/1 done)
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██████░░░░] 65% (phase 3 plan 4/4 done)
 | Phase 03-saga-orchestration P02 | 2 | 2 tasks | 4 files |
 | Phase 03-saga-orchestration P03 | 2 | 2 tasks | 4 files |
 | Phase 03-saga-orchestration P04 | 176 | 2 tasks | 2 files |
+| Phase 04-fault-tolerance P01 | 227 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,10 @@ Recent decisions affecting current work:
 - [Phase 03-saga-orchestration 03-04]: Orchestrator gRPC server started manually via grpc.aio.server() in conftest — not serve_grpc() which blocks on wait_for_termination()
 - [Phase 03-saga-orchestration 03-04]: Test 9 patches grpc_server.release_stock + asyncio.sleep to simulate transient gRPC failures without real delays
 - [Phase 03-saga-orchestration 03-04]: Test 10 replays stock/payment operations with same idempotency keys to validate Phase 2 Lua caching prevents double execution
+- [Phase 04-fault-tolerance 04-01]: Independent per-service circuit breakers (stock_breaker, payment_breaker) with failure_threshold=5, recovery_timeout=30 — Stock outage must not block Payment
+- [Phase 04-fault-tolerance 04-01]: CircuitBreakerError propagates immediately from retry_forward (never retried) — open breaker means service down, retrying wastes time and delays compensation
+- [Phase 04-fault-tolerance 04-01]: Startup recovery blocks serve_grpc until all stale SAGAs (>5 min old) are driven to terminal state — forward-first replay using idempotent keys from Phase 2
+- [Phase 04-fault-tolerance 04-01]: restart: always added to all 9 containers in docker-compose.yml for self-healing after container kills
 
 ### Pending Todos
 
@@ -112,6 +117,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28T13:18:50Z
-Stopped at: Completed 03-04-PLAN.md (SAGA Integration Tests); Phase 3 COMPLETE (4/4 plans done)
+Last session: 2026-02-28T14:01:35Z
+Stopped at: Completed 04-01-PLAN.md (Circuit Breakers and SAGA Recovery); Phase 4 in progress (1/1 plans done)
 Resume file: None

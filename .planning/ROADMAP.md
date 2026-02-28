@@ -145,7 +145,7 @@ Note: Phase 5 depends on Phase 3 (not Phase 4); Phases 4 and 5 can proceed in ei
 | 1. Async Foundation | 3/3 | Complete   | 2026-02-28 |
 | 2. gRPC Communication | 4/4 | Complete   | 2026-02-28 |
 | 3. SAGA Orchestration | 4/4 | Complete   | 2026-02-28 |
-| 4. Fault Tolerance | 0/2 | Not started | - |
+| 4. Fault Tolerance | 1/2 | In Progress|  |
 | 5. Event-Driven Architecture | 0/1 | Not started | - |
 | 6. Infrastructure | 0/3 | Not started | - |
 | 7. Validation and Delivery | 0/3 | Not started | - |
