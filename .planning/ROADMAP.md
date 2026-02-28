@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: gRPC Communication** - Add gRPC servers to Stock and Payment; define proto contracts with idempotency keys (completed 2026-02-28)
 - [x] **Phase 3: SAGA Orchestration** - Build the SAGA orchestrator with Redis-persisted state, idempotent service operations, and compensation (completed 2026-02-28)
 - [ ] **Phase 4: Fault Tolerance** - Add crash recovery, circuit breakers, and verified consistency under container-kill scenarios
-- [ ] **Phase 5: Event-Driven Architecture** - Integrate Redis Streams for SAGA lifecycle events and compensation retry
+- [x] **Phase 5: Event-Driven Architecture** - Integrate Redis Streams for SAGA lifecycle events and compensation retry (completed 2026-02-28)
 - [ ] **Phase 6: Infrastructure** - Configure Redis Cluster per domain, Kubernetes HPA, and benchmark tuning
 - [ ] **Phase 7: Validation and Delivery** - Pass the benchmark, verify consistency under kill tests, write architecture doc and contributions
 
@@ -149,6 +149,6 @@ Note: Phase 5 depends on Phase 3 (not Phase 4); Phases 4 and 5 can proceed in ei
 | 2. gRPC Communication | 4/4 | Complete   | 2026-02-28 |
 | 3. SAGA Orchestration | 4/4 | Complete   | 2026-02-28 |
 | 4. Fault Tolerance | 1/2 | In Progress|  |
-| 5. Event-Driven Architecture | 1/2 | In Progress|  |
+| 5. Event-Driven Architecture | 2/2 | Complete   | 2026-02-28 |
 | 6. Infrastructure | 0/3 | Not started | - |
 | 7. Validation and Delivery | 0/3 | Not started | - |
