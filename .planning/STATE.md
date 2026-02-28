@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-02-28T09:10:16.475Z"
+last_updated: "2026-02-28T12:59:00Z"
 progress:
-  total_phases: 2
+  total_phases: 7
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 8
+  completed_plans: 8
 ---
 
 # Project State
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-27)
 
 **Core value:** Checkout transactions must never lose money or item counts — consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 2 — gRPC Communication
+**Current focus:** Phase 3 — SAGA Orchestration
 
 ## Current Position
 
-Phase: 2 of 7 (gRPC Communication)
-Plan: 4 of 4 in current phase (plan 04 complete — phase complete)
-Status: Phase 2 complete
-Last activity: 2026-02-28 — Completed 02-04 (integration tests: pytest fixtures, 7 tests covering GRPC-01 through GRPC-04)
+Phase: 3 of 7 (SAGA Orchestration)
+Plan: 1 of 4 in current phase (plan 01 complete)
+Status: Phase 3 in progress
+Last activity: 2026-02-28 — Completed 03-01 (orchestrator.proto + saga.py SAGA state machine)
 
-Progress: [███░░░░░░░] 57% (4/7 phases in progress)
+Progress: [████░░░░░░] 43% (phase 3 plan 1/4 done)
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [███░░░░░░░] 57% (4/7 phases in progress)
 | Phase 01-async-foundation P02 | 2 | 1 tasks | 2 files |
 | Phase 01-async-foundation P01 | 2 | 2 tasks | 3 files |
 | Phase 02-grpc-communication P04 | 2 | 2 tasks | 5 files |
+| Phase 03-saga-orchestration P01 | 93 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,10 @@ Recent decisions affecting current work:
 - [Phase 02-grpc-communication 02-03]: init_grpc_clients() accepts optional address overrides for test-time injection without env var manipulation
 - [Phase 02-grpc-communication 02-04]: asyncio_default_test_loop_scope=session required in pytest.ini alongside asyncio_default_fixture_loop_scope=session to prevent grpc.aio channel loop mismatch errors in tests
 - [Phase 02-grpc-communication 02-04]: Stock gRPC server on port 50051, Payment on 50052 in tests — manual gRPC server creation in fixtures avoids modifying service code while preventing port collision
+- [Phase 03-saga-orchestration 03-01]: orchestrator_pb2 stubs use absolute imports — consistent with Phase 2 convention, works when run from service directory
+- [Phase 03-saga-orchestration 03-01]: HSETNX on 'state' field prevents duplicate SAGA record creation under concurrent requests
+- [Phase 03-saga-orchestration 03-01]: TRANSITION_LUA Lua CAS validates from_state before update — same atomic pattern as Phase 2 IDEMPOTENCY_ACQUIRE_LUA
+- [Phase 03-saga-orchestration 03-01]: Manual byte decoding in get_saga (k.decode()/v.decode()) — consistent with existing codebase, no decode_responses=True
 
 ### Pending Todos
 
@@ -93,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28T09:04:25Z
-Stopped at: Completed 02-04-PLAN.md (integration tests for gRPC wiring); Phase 2 plan 4 of 4 complete — Phase 2 done
+Last session: 2026-02-28T12:59:00Z
+Stopped at: Completed 03-01-PLAN.md (orchestrator.proto + saga.py); Phase 3 plan 1 of 4 complete
 Resume file: None

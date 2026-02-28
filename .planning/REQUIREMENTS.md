@@ -22,13 +22,13 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### SAGA Orchestration
 
-- [ ] **SAGA-01**: Every checkout creates a persistent SAGA record in Redis before any side effects
-- [ ] **SAGA-02**: SAGA state machine has explicit states (STARTED, STOCK_RESERVED, PAYMENT_CHARGED, COMPLETED, COMPENSATING, FAILED) with validated transitions
+- [x] **SAGA-01**: Every checkout creates a persistent SAGA record in Redis before any side effects
+- [x] **SAGA-02**: SAGA state machine has explicit states (STARTED, STOCK_RESERVED, PAYMENT_CHARGED, COMPLETED, COMPENSATING, FAILED) with validated transitions
 - [ ] **SAGA-03**: Dedicated SAGA orchestrator coordinates checkout: reserve stock → charge payment → confirm order
 - [ ] **SAGA-04**: Orchestrator drives compensation in reverse on failure: refund payment → restore stock → mark failed
 - [ ] **SAGA-05**: Compensating transactions retry with exponential backoff until success (never silently dropped)
 - [ ] **SAGA-06**: Checkout endpoint returns exactly-once semantics using order_id as idempotency key
-- [ ] **SAGA-07**: SAGA orchestrator designed with clean interface boundary for Phase 2 extraction
+- [x] **SAGA-07**: SAGA orchestrator designed with clean interface boundary for Phase 2 extraction
 
 ### Idempotency & Atomicity
 
@@ -113,13 +113,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRPC-02 | Phase 2 | Complete |
 | GRPC-03 | Phase 2 | Complete |
 | GRPC-04 | Phase 2 | Complete |
-| SAGA-01 | Phase 3 | Pending |
-| SAGA-02 | Phase 3 | Pending |
+| SAGA-01 | Phase 3 | Complete |
+| SAGA-02 | Phase 3 | Complete |
 | SAGA-03 | Phase 3 | Pending |
 | SAGA-04 | Phase 3 | Pending |
 | SAGA-05 | Phase 3 | Pending |
 | SAGA-06 | Phase 3 | Pending |
-| SAGA-07 | Phase 3 | Pending |
+| SAGA-07 | Phase 3 | Complete |
 | IDMP-01 | Phase 3 | Pending |
 | IDMP-02 | Phase 3 | Pending |
 | IDMP-03 | Phase 3 | Pending |
