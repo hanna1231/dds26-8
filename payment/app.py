@@ -6,6 +6,7 @@ import redis.asyncio as redis
 
 from msgspec import msgpack, Struct
 from quart import Quart, jsonify, abort, Response
+from grpc_server import serve_grpc, stop_grpc_server
 
 DB_ERROR_STR = "DB error"
 
@@ -22,10 +23,12 @@ async def startup():
                      port=int(os.environ['REDIS_PORT']),
                      password=os.environ['REDIS_PASSWORD'],
                      db=int(os.environ['REDIS_DB']))
+    app.add_background_task(serve_grpc, db)
 
 
 @app.after_serving
 async def shutdown():
+    await stop_grpc_server()
     await db.aclose()
 
 
