@@ -28,6 +28,7 @@ from saga import (
     set_saga_error,
 )
 from client import reserve_stock, release_stock, charge_payment, refund_payment
+from events import publish_event
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +156,8 @@ async def run_compensation(db, saga: dict) -> None:
 
     # Finalize: transition to FAILED
     await transition_state(db, saga_key, "COMPENSATING", "FAILED")
+    await publish_event(db, "compensation_completed", f"saga:{order_id}", order_id, user_id)
+    await publish_event(db, "saga_failed", f"saga:{order_id}", order_id, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +224,9 @@ async def run_checkout(
             return {"success": False, "error_message": existing.get("error_message", "")}
         return {"success": False, "error_message": "checkout already in progress"}
 
+    await publish_event(db, "checkout_started", f"saga:{order_id}", order_id, user_id,
+                        total_cost=str(total_cost), item_count=str(len(items)))
+
     # --- Forward execution (bounded retry; CircuitBreakerError triggers compensation) ---
     try:
         # Step 1: Reserve stock for each item
@@ -236,12 +242,19 @@ async def run_checkout(
                 error_msg = result.get("error_message", "stock reservation failed")
                 await set_saga_error(db, order_id, error_msg)
                 await transition_state(db, saga_key, "STARTED", "COMPENSATING")
+                await publish_event(db, "stock_failed", f"saga:{order_id}", order_id, user_id,
+                                    failed_step="reserve_stock", error_type="stock_reservation_failed",
+                                    error_message=error_msg)
+                await publish_event(db, "compensation_triggered", f"saga:{order_id}", order_id, user_id,
+                                    failed_step="reserve_stock", error_type="stock_reservation_failed",
+                                    retry_count="0")
                 saga = await get_saga(db, order_id)
                 await run_compensation(db, saga)
                 return {"success": False, "error_message": error_msg}
 
         # All stock reservations succeeded
         await transition_state(db, saga_key, "STARTED", "STOCK_RESERVED", "stock_reserved", "1")
+        await publish_event(db, "stock_reserved", f"saga:{order_id}", order_id, user_id)
 
         # Step 2: Charge payment
         result = await retry_forward(
@@ -251,15 +264,24 @@ async def run_checkout(
             error_msg = result.get("error_message", "payment charge failed")
             await set_saga_error(db, order_id, error_msg)
             await transition_state(db, saga_key, "STOCK_RESERVED", "COMPENSATING")
+            await publish_event(db, "payment_failed", f"saga:{order_id}", order_id, user_id,
+                                failed_step="charge_payment", error_type="payment_charge_failed",
+                                error_message=error_msg)
+            await publish_event(db, "compensation_triggered", f"saga:{order_id}", order_id, user_id,
+                                failed_step="charge_payment", error_type="payment_charge_failed",
+                                retry_count="0")
             saga = await get_saga(db, order_id)
             await run_compensation(db, saga)
             return {"success": False, "error_message": error_msg}
 
         # Payment succeeded
         await transition_state(db, saga_key, "STOCK_RESERVED", "PAYMENT_CHARGED", "payment_charged", "1")
+        await publish_event(db, "payment_completed", f"saga:{order_id}", order_id, user_id,
+                            total_cost=str(total_cost))
 
         # Step 3: Mark COMPLETED
         await transition_state(db, saga_key, "PAYMENT_CHARGED", "COMPLETED")
+        await publish_event(db, "saga_completed", f"saga:{order_id}", order_id, user_id)
 
         return {"success": True, "error_message": ""}
 
@@ -270,6 +292,9 @@ async def run_checkout(
         current_state = current_saga.get("state", "STARTED") if current_saga else "STARTED"
         if current_state not in ("COMPLETED", "FAILED", "COMPENSATING"):
             await transition_state(db, saga_key, current_state, "COMPENSATING")
+        await publish_event(db, "compensation_triggered", f"saga:{order_id}", order_id, user_id,
+                            failed_step="circuit_breaker", error_type="service_unavailable",
+                            retry_count="0")
         saga = await get_saga(db, order_id)
         await run_compensation(db, saga)
         return {"success": False, "error_message": error_msg}
