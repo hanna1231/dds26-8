@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T09:01:34.476Z"
+last_updated: "2026-03-01T09:01:51.091Z"
 progress:
   total_phases: 7
   completed_phases: 6
@@ -65,6 +65,7 @@ Progress: [██████████] ~100% (6 phases complete)
 | Phase 06-infrastructure P02 | 15 | 2 tasks | 12 files |
 | Phase 06-infrastructure P03 | 5 | 2 tasks | 6 files |
 | Phase 07-validation-and-delivery P03 | 2 | 2 tasks | 2 files |
+| Phase 07-validation-and-delivery P02 | 7 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,8 @@ Recent decisions affecting current work:
 - [Phase 06-infrastructure]: Application services have no profile and rely on restart: always + RedisCluster retry for Redis availability across both profiles
 - [Phase 07-validation-and-delivery]: Architecture document organized by system layer (Communication → Orchestration → Events → Resilience → Infrastructure) with explicit alternatives tables and rejection reasons per section
 - [Phase 07-validation-and-delivery]: Decision-focused depth: what was chosen, alternatives considered, why — enables team members to answer instructor questions for any architectural choice
+- [Phase 07-validation-and-delivery]: SAGA_STALENESS_SECONDS passed via docker-compose.yml env var override (not docker exec) — simplest approach, works at container launch
+- [Phase 07-validation-and-delivery]: kill-test Makefile target starts cluster with SAGA_STALENESS_SECONDS=10 enabling 30s kill-test recovery window
 
 ### Pending Todos
 

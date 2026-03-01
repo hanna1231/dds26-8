@@ -67,7 +67,7 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 - [ ] **TEST-01**: Existing integration tests pass against new architecture
 - [ ] **TEST-02**: System passes the provided wdm-project-benchmark without modifications
-- [ ] **TEST-03**: Consistency verified after kill-container recovery scenarios
+- [x] **TEST-03**: Consistency verified after kill-container recovery scenarios
 
 ## v2 Requirements
 
@@ -140,7 +140,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DOCS-03 | Phase 7 | Complete |
 | TEST-01 | Phase 7 | Pending |
 | TEST-02 | Phase 7 | Pending |
-| TEST-03 | Phase 7 | Pending |
+| TEST-03 | Phase 7 | Complete |
 
 **Coverage:**
 - v1 requirements: 35 total
