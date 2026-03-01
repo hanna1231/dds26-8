@@ -3,6 +3,7 @@ import os
 import uuid
 
 import redis.asyncio as redis
+import redis.exceptions
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 from msgspec import msgpack, Struct
@@ -80,10 +81,11 @@ async def create_user():
 async def batch_init_users(n: int, starting_money: int):
     n = int(n)
     starting_money = int(starting_money)
-    kv_pairs: dict[str, bytes] = {f"{{user:{i}}}": msgpack.encode(UserValue(credit=starting_money))
-                                  for i in range(n)}
     try:
-        await db.mset(kv_pairs)
+        pipe = db.pipeline(transaction=False)
+        for i in range(n):
+            pipe.set(f"{{user:{i}}}", msgpack.encode(UserValue(credit=starting_money)))
+        await pipe.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for users successful"})

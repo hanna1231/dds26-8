@@ -1,53 +1,98 @@
-# Distributed Data Systems Project Template
+# DDS26-8: Distributed Checkout System
 
-Basic project structure with Python's Flask and Redis. 
-**You are free to use any web framework in any language and any database you like for this project.**
+A fault-tolerant distributed checkout system built with the SAGA orchestration pattern, gRPC communication, Redis Cluster, and event-driven architecture.
 
-### Project structure
+See [docs/architecture.md](docs/architecture.md) for the full architecture design document.
 
-* `env`
-    Folder containing the Redis env variables for the docker-compose deployment
-    
-* `helm-config` 
-   Helm chart values for Redis and ingress-nginx
-        
-* `k8s`
-    Folder containing the kubernetes deployments, apps and services for the ingress, order, payment and stock services.
-    
-* `order`
-    Folder containing the order application logic and dockerfile. 
-    
-* `payment`
-    Folder containing the payment application logic and dockerfile. 
+## Project Structure
 
-* `stock`
-    Folder containing the stock application logic and dockerfile. 
+| Directory | Description |
+|-----------|-------------|
+| `order/` | Order service (Quart+Uvicorn, async Redis, gRPC client to orchestrator) |
+| `stock/` | Stock service (Quart+Uvicorn, async Redis, gRPC server on :50051) |
+| `payment/` | Payment service (Quart+Uvicorn, async Redis, gRPC server on :50051) |
+| `orchestrator/` | SAGA orchestrator (Quart+Uvicorn, gRPC server on :50053, Redis Streams) |
+| `protos/` | Protocol Buffer definitions for Stock, Payment, and Orchestrator services |
+| `scripts/` | Kill-container consistency test scripts |
+| `tests/` | Integration tests (gRPC, SAGA, fault tolerance, events) |
+| `k8s/` | Kubernetes Deployments, Services, HPAs, and Ingress |
+| `helm-config/` | Helm chart values for per-domain Redis Cluster and nginx ingress |
+| `env/` | Redis environment variables for docker-compose |
+| `docs/` | Architecture design document |
 
-* `test`
-    Folder containing some basic correctness tests for the entire system. (Feel free to enhance them)
+## Quick Start
 
-### Deployment types:
+**Requirements:** Docker and Docker Compose
 
-#### docker-compose (local development)
+### Local Development (simple mode)
 
-After coding the REST endpoint logic run `docker-compose up --build` in the base folder to test if your logic is correct
-(you can use the provided tests in the `\test` folder and change them as you wish). 
+Uses a single shared 6-node Redis Cluster for all services:
 
-***Requirements:*** You need to have docker and docker-compose installed on your machine. 
+```bash
+make dev-up
+```
 
-K8s is also possible, but we do not require it as part of your submission. 
+API available at http://localhost:8000
 
-#### minikube (local k8s cluster)
+### Full Topology (mirrors production)
 
-This setup is for local k8s testing to see if your k8s config works before deploying to the cloud. 
-First deploy your database using helm by running the `deploy-charts-minicube.sh` file (in this example the DB is Redis 
-but you can find any database you want in https://artifacthub.io/ and adapt the script). Then adapt the k8s configuration files in the
-`\k8s` folder to mach your system and then run `kubectl apply -f .` in the k8s folder. 
+Uses 3 independent 6-node Redis Clusters (18 nodes total), one per service domain:
 
-***Requirements:*** You need to have minikube (with ingress enabled) and helm installed on your machine.
+```bash
+make dev-cluster
+```
 
-#### kubernetes cluster (managed k8s cluster in the cloud)
+### Important: Do NOT run `docker compose up` directly
 
-Similarly to the `minikube` deployment but run the `deploy-charts-cluster.sh` in the helm step to also install an ingress to the cluster. 
+The services default to per-domain Redis hostnames (`order-redis-0`, `stock-redis-0`, etc.) which only exist in the full profile. The Makefile targets set the correct environment variables for each mode. Always use `make dev-up` or `make dev-cluster`.
 
-***Requirements:*** You need to have access to kubectl of a k8s cluster.
+### Other Commands
+
+```bash
+make dev-logs      # Follow service logs
+make dev-status    # Show container status
+make dev-down      # Stop containers (data preserved)
+make dev-clean     # Stop and remove everything (clean slate)
+make dev-build     # Rebuild service images
+```
+
+## Running Tests
+
+### Integration Tests
+
+```bash
+make test
+```
+
+Runs 37 integration tests covering gRPC communication, SAGA orchestration, fault tolerance, and event-driven architecture. Requires Redis on localhost:6379.
+
+### Benchmark (consistency test)
+
+```bash
+make dev-up        # start the cluster first
+make benchmark
+```
+
+Clones and runs the [wdm-project-benchmark](https://github.com/delftdata/wdm-project-benchmark) consistency test against the running cluster.
+
+### Kill-Container Test
+
+```bash
+make dev-up
+make kill-test SERVICE=stock-service    # test a single service
+make kill-test-all                      # test all services sequentially
+```
+
+Verifies that the system remains consistent (no lost money or stock) after killing and restarting a service mid-transaction.
+
+## Kubernetes Deployment
+
+```bash
+# Install Redis Clusters and nginx ingress
+./deploy-charts-cluster.sh
+
+# Deploy application services
+kubectl apply -f k8s/
+```
+
+HPA auto-scales order, stock, and payment services (CPU > 70%, max 3 replicas). The orchestrator runs as a single replica. Total CPU budget fits within 20 CPUs at max scale.
