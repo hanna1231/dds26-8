@@ -4,6 +4,7 @@ import uuid
 from collections import defaultdict
 
 import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
 import httpx
 import grpc.aio
 
@@ -22,7 +23,7 @@ ORCHESTRATOR_ADDR = os.environ.get("ORCHESTRATOR_GRPC_ADDR", "orchestrator-servi
 
 app = Quart("order-service")
 
-db: redis.Redis = None
+db = None
 http_client: httpx.AsyncClient = None
 _orchestrator_channel = None
 _orchestrator_stub: OrchestratorServiceStub = None
@@ -31,10 +32,15 @@ _orchestrator_stub: OrchestratorServiceStub = None
 @app.before_serving
 async def startup():
     global db, http_client, _orchestrator_channel, _orchestrator_stub
-    db = redis.Redis(host=os.environ['REDIS_HOST'],
-                     port=int(os.environ['REDIS_PORT']),
-                     password=os.environ['REDIS_PASSWORD'],
-                     db=int(os.environ['REDIS_DB']))
+    node_host = os.environ['REDIS_NODE_HOST']
+    node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
+    db = RedisCluster(
+        startup_nodes=[ClusterNode(node_host, node_port)],
+        password=os.environ['REDIS_PASSWORD'],
+        decode_responses=False,
+        require_full_coverage=True,
+    )
+    await db.initialize()
     http_client = httpx.AsyncClient()
     _orchestrator_channel = grpc.aio.insecure_channel(ORCHESTRATOR_ADDR)
     _orchestrator_stub = OrchestratorServiceStub(_orchestrator_channel)
@@ -67,6 +73,15 @@ async def get_order_from_db(order_id: str) -> OrderValue | None:
         # if order does not exist in the database; abort
         abort(400, f"Order: {order_id} not found!")
     return entry
+
+
+@app.get('/health')
+async def health():
+    try:
+        await db.ping()
+        return jsonify({"status": "ok"}), 200
+    except Exception:
+        return jsonify({"status": "unhealthy"}), 503
 
 
 @app.post('/create/<user_id>')
