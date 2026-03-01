@@ -130,12 +130,12 @@ Plans:
   3. A container kill during active benchmark load, followed by recovery, results in a consistent database state (no lost money or item counts)
   4. An architecture design document exists covering SAGA pattern, gRPC design, Redis Cluster topology, Kubernetes scaling, event-driven design, and fault tolerance strategy
   5. contributions.txt exists at the repo root with team member contributions
-**Plans**: TBD
+**Plans**: 3 plans (all Wave 1, parallel)
 
 Plans:
-- [ ] 07-01: Run integration tests and benchmark; fix any failures
-- [ ] 07-02: Execute kill-container consistency scenarios; verify recovery
-- [ ] 07-03: Write architecture design document and contributions.txt
+- [ ] 07-01: Run integration tests and wdm-project-benchmark consistency test; fix any failures (Wave 1)
+- [ ] 07-02: Create kill-container consistency test scripts; make STALENESS_THRESHOLD configurable (Wave 1)
+- [ ] 07-03: Write architecture design document and contributions.txt placeholder (Wave 1)
 
 ## Progress
 
