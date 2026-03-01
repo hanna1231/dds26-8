@@ -71,7 +71,10 @@ services:
 
   # --- Order Redis Cluster ---
   order-redis-0:
-    image: docker.io/bitnami/redis-cluster:8.0
+    build:
+      context: ./docker/redis-cluster
+      dockerfile: Dockerfile
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -79,15 +82,15 @@ services:
       - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-0:/bitnami/redis/data
+      - order-redis-data-0:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   order-redis-1:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -95,15 +98,15 @@ services:
       - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-1:/bitnami/redis/data
+      - order-redis-data-1:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   order-redis-2:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -111,15 +114,15 @@ services:
       - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-2:/bitnami/redis/data
+      - order-redis-data-2:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   order-redis-3:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -127,15 +130,15 @@ services:
       - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-3:/bitnami/redis/data
+      - order-redis-data-3:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   order-redis-4:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -143,15 +146,15 @@ services:
       - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-4:/bitnami/redis/data
+      - order-redis-data-4:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   order-redis-5:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     depends_on:
@@ -173,16 +176,16 @@ services:
       - REDIS_CLUSTER_CREATOR=yes
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - order-redis-data-5:/bitnami/redis/data
+      - order-redis-data-5:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # --- Stock Redis Cluster ---
   stock-redis-0:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -190,15 +193,15 @@ services:
       - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-0:/bitnami/redis/data
+      - stock-redis-data-0:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   stock-redis-1:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -206,15 +209,15 @@ services:
       - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-1:/bitnami/redis/data
+      - stock-redis-data-1:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   stock-redis-2:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -222,15 +225,15 @@ services:
       - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-2:/bitnami/redis/data
+      - stock-redis-data-2:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   stock-redis-3:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -238,15 +241,15 @@ services:
       - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-3:/bitnami/redis/data
+      - stock-redis-data-3:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   stock-redis-4:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -254,15 +257,15 @@ services:
       - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-4:/bitnami/redis/data
+      - stock-redis-data-4:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   stock-redis-5:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     depends_on:
@@ -284,16 +287,16 @@ services:
       - REDIS_CLUSTER_CREATOR=yes
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - stock-redis-data-5:/bitnami/redis/data
+      - stock-redis-data-5:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # --- Payment Redis Cluster (also used by orchestrator-service) ---
   payment-redis-0:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -301,15 +304,15 @@ services:
       - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-0:/bitnami/redis/data
+      - payment-redis-data-0:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   payment-redis-1:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -317,15 +320,15 @@ services:
       - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-1:/bitnami/redis/data
+      - payment-redis-data-1:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   payment-redis-2:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -333,15 +336,15 @@ services:
       - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-2:/bitnami/redis/data
+      - payment-redis-data-2:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   payment-redis-3:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -349,15 +352,15 @@ services:
       - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-3:/bitnami/redis/data
+      - payment-redis-data-3:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   payment-redis-4:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     environment:
@@ -365,15 +368,15 @@ services:
       - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-4:/bitnami/redis/data
+      - payment-redis-data-4:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   payment-redis-5:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["full"]
     restart: always
     depends_on:
@@ -395,9 +398,9 @@ services:
       - REDIS_CLUSTER_CREATOR=yes
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - payment-redis-data-5:/bitnami/redis/data
+      - payment-redis-data-5:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -408,7 +411,10 @@ services:
   # All services point to shared-redis-0 via Makefile env var overrides
   # ---------------------------------------------------------------------------
   shared-redis-0:
-    image: docker.io/bitnami/redis-cluster:8.0
+    build:
+      context: ./docker/redis-cluster
+      dockerfile: Dockerfile
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     environment:
@@ -416,15 +422,15 @@ services:
       - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-0:/bitnami/redis/data
+      - shared-redis-data-0:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   shared-redis-1:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     environment:
@@ -432,15 +438,15 @@ services:
       - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-1:/bitnami/redis/data
+      - shared-redis-data-1:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   shared-redis-2:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     environment:
@@ -448,15 +454,15 @@ services:
       - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-2:/bitnami/redis/data
+      - shared-redis-data-2:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   shared-redis-3:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     environment:
@@ -464,15 +470,15 @@ services:
       - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-3:/bitnami/redis/data
+      - shared-redis-data-3:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   shared-redis-4:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     environment:
@@ -480,15 +486,15 @@ services:
       - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-4:/bitnami/redis/data
+      - shared-redis-data-4:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   shared-redis-5:
-    image: docker.io/bitnami/redis-cluster:8.0
+    image: redis-cluster:local
     profiles: ["simple"]
     restart: always
     depends_on:
@@ -510,9 +516,9 @@ services:
       - REDIS_CLUSTER_CREATOR=yes
       - REDIS_PORT_NUMBER=6379
     volumes:
-      - shared-redis-data-5:/bitnami/redis/data
+      - shared-redis-data-5:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
