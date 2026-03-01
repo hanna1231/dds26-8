@@ -6,10 +6,11 @@ to a terminal state (COMPLETED or FAILED) before the orchestrator serves traffic
 """
 import json
 import logging
+import os
 import time
 
 NON_TERMINAL_STATES = {"STARTED", "STOCK_RESERVED", "PAYMENT_CHARGED", "COMPENSATING"}
-STALENESS_THRESHOLD_SECONDS = 300  # 5 minutes (Claude's discretion)
+STALENESS_THRESHOLD_SECONDS = int(os.environ.get('SAGA_STALENESS_SECONDS', '300'))
 
 
 async def resume_saga(db, saga: dict) -> None:
