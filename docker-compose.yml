@@ -1,6 +1,8 @@
-version: "3"
 services:
 
+  # ---------------------------------------------------------------------------
+  # Gateway
+  # ---------------------------------------------------------------------------
   gateway:
     image: nginx:1.25-bookworm
     restart: always
@@ -13,6 +15,9 @@ services:
       - stock-service
       - payment-service
 
+  # ---------------------------------------------------------------------------
+  # Application services
+  # ---------------------------------------------------------------------------
   order-service:
     build: ./order
     image: order:latest
@@ -20,64 +25,522 @@ services:
     environment:
       - GATEWAY_URL=http://gateway:80
       - ORCHESTRATOR_GRPC_ADDR=orchestrator-service:50053
+      - REDIS_NODE_HOST=${ORDER_REDIS_HOST:-order-redis-0}
+      - REDIS_PASSWORD=redis
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
-    env_file:
-      - env/order_redis.env
     depends_on:
-      - order-db
       - orchestrator-service
-
-  order-db:
-    image: redis:7.2-bookworm
-    restart: always
-    command: redis-server --requirepass redis --maxmemory 512mb
 
   stock-service:
     build: ./stock
     image: stock:latest
     restart: always
+    environment:
+      - REDIS_NODE_HOST=${STOCK_REDIS_HOST:-stock-redis-0}
+      - REDIS_PASSWORD=redis
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
-    env_file:
-      - env/stock_redis.env
-    depends_on:
-      - stock-db
-
-  stock-db:
-    image: redis:7.2-bookworm
-    restart: always
-    command: redis-server --requirepass redis --maxmemory 512mb
 
   payment-service:
     build: ./payment
     image: user:latest
     restart: always
+    environment:
+      - REDIS_NODE_HOST=${PAYMENT_REDIS_HOST:-payment-redis-0}
+      - REDIS_PASSWORD=redis
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
-    env_file:
-      - env/payment_redis.env
-    depends_on:
-      - payment-db
-
-  payment-db:
-    image: redis:7.2-bookworm
-    restart: always
-    command: redis-server --requirepass redis --maxmemory 512mb
 
   orchestrator-service:
     build: ./orchestrator
     image: orchestrator:latest
     restart: always
-    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     environment:
       - STOCK_GRPC_ADDR=stock-service:50051
       - PAYMENT_GRPC_ADDR=payment-service:50051
-    env_file:
-      - env/orchestrator_redis.env
+      - REDIS_NODE_HOST=${ORCH_REDIS_HOST:-payment-redis-0}
+      - REDIS_PASSWORD=redis
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     depends_on:
-      - orchestrator-db
       - stock-service
       - payment-service
 
-  orchestrator-db:
-    image: redis:7.2-bookworm
+  # ---------------------------------------------------------------------------
+  # Full profile: per-domain Redis Clusters (18 nodes, 6 per domain)
+  # Activate with: docker compose --profile full up
+  # ---------------------------------------------------------------------------
+
+  # --- Order Redis Cluster ---
+  order-redis-0:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
     restart: always
-    command: redis-server --requirepass redis --maxmemory 512mb
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-0:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-redis-1:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-1:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-redis-2:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-2:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-redis-3:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-3:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-redis-4:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-4:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  order-redis-5:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    depends_on:
+      order-redis-0:
+        condition: service_healthy
+      order-redis-1:
+        condition: service_healthy
+      order-redis-2:
+        condition: service_healthy
+      order-redis-3:
+        condition: service_healthy
+      order-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-5:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Stock Redis Cluster ---
+  stock-redis-0:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-0:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stock-redis-1:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-1:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stock-redis-2:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-2:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stock-redis-3:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-3:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stock-redis-4:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-4:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  stock-redis-5:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    depends_on:
+      stock-redis-0:
+        condition: service_healthy
+      stock-redis-1:
+        condition: service_healthy
+      stock-redis-2:
+        condition: service_healthy
+      stock-redis-3:
+        condition: service_healthy
+      stock-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-5:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Payment Redis Cluster (also used by orchestrator-service) ---
+  payment-redis-0:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-0:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-redis-1:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-1:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-redis-2:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-2:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-redis-3:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-3:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-redis-4:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-4:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-redis-5:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["full"]
+    restart: always
+    depends_on:
+      payment-redis-0:
+        condition: service_healthy
+      payment-redis-1:
+        condition: service_healthy
+      payment-redis-2:
+        condition: service_healthy
+      payment-redis-3:
+        condition: service_healthy
+      payment-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-5:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Simple profile: single shared 6-node Redis Cluster
+  # Activate with: docker compose --profile simple up
+  # All services point to shared-redis-0 via Makefile env var overrides
+  # ---------------------------------------------------------------------------
+  shared-redis-0:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-0:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shared-redis-1:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-1:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shared-redis-2:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-2:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shared-redis-3:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-3:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shared-redis-4:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-4:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shared-redis-5:
+    image: docker.io/bitnami/redis-cluster:8.0
+    profiles: ["simple"]
+    restart: always
+    depends_on:
+      shared-redis-0:
+        condition: service_healthy
+      shared-redis-1:
+        condition: service_healthy
+      shared-redis-2:
+        condition: service_healthy
+      shared-redis-3:
+        condition: service_healthy
+      shared-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-5:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ---------------------------------------------------------------------------
+# Volumes: 18 per-domain Redis data volumes + 6 shared volumes = 24 total
+# ---------------------------------------------------------------------------
+volumes:
+  order-redis-data-0:
+  order-redis-data-1:
+  order-redis-data-2:
+  order-redis-data-3:
+  order-redis-data-4:
+  order-redis-data-5:
+  stock-redis-data-0:
+  stock-redis-data-1:
+  stock-redis-data-2:
+  stock-redis-data-3:
+  stock-redis-data-4:
+  stock-redis-data-5:
+  payment-redis-data-0:
+  payment-redis-data-1:
+  payment-redis-data-2:
+  payment-redis-data-3:
+  payment-redis-data-4:
+  payment-redis-data-5:
+  shared-redis-data-0:
+  shared-redis-data-1:
+  shared-redis-data-2:
+  shared-redis-data-3:
+  shared-redis-data-4:
+  shared-redis-data-5:
