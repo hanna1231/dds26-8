@@ -24,7 +24,7 @@ async def resume_saga(db, saga: dict) -> None:
     from saga import transition_state, get_saga
 
     order_id = saga["order_id"]
-    saga_key = f"saga:{order_id}"
+    saga_key = f"{{saga:{order_id}}}"
     state = saga["state"]
 
     logging.info("Recovering SAGA %s from state=%s", order_id, state)
@@ -44,7 +44,7 @@ async def resume_saga(db, saga: dict) -> None:
                 quantity = item["quantity"]
                 result = await reserve_stock(
                     item_id, quantity,
-                    f"saga:{order_id}:step:reserve:{item_id}"
+                    f"{{saga:{order_id}}}:step:reserve:{item_id}"
                 )
                 if not result.get("success"):
                     logging.warning(
@@ -60,7 +60,7 @@ async def resume_saga(db, saga: dict) -> None:
         if state == "STOCK_RESERVED":
             result = await charge_payment(
                 saga["user_id"], int(saga["total_cost"]),
-                f"saga:{order_id}:step:charge"
+                f"{{saga:{order_id}}}:step:charge"
             )
             if not result.get("success"):
                 logging.warning(
@@ -102,7 +102,7 @@ async def recover_incomplete_sagas(db) -> None:
     skipped = 0
     now = int(time.time())
 
-    async for key in db.scan_iter(match="saga:*", count=100):
+    async for key in db.scan_iter(match="{saga:*", count=100):
         raw = await db.hgetall(key)
         if not raw:
             continue

@@ -30,7 +30,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 # ---------------------------------------------------------------------------
 # Lua CAS script for atomic state transition
 #
-# KEYS[1]  — saga hash key (e.g. "saga:{order_id}")
+# KEYS[1]  — saga hash key (e.g. "{saga:<order_id>}")
 # ARGV[1]  — expected current state
 # ARGV[2]  — new (target) state
 # ARGV[3]  — optional extra field name to set (pass "" to skip)
@@ -63,7 +63,7 @@ async def create_saga_record(
     """
     Atomically create a new SAGA record in Redis.
 
-    Uses HSETNX on the 'state' field to prevent duplicate creation.
+    Uses HSETNX on the 'state' field to prevent duplicate SAGA record creation.
     If the record already exists (HSETNX returns 0), returns False.
 
     Args:
@@ -76,7 +76,7 @@ async def create_saga_record(
     Returns:
         True if SAGA was created, False if it already existed.
     """
-    saga_key = f"saga:{order_id}"
+    saga_key = f"{{saga:{order_id}}}"
     now = str(int(time.time()))
 
     # Atomically claim the record; returns 1 if created, 0 if already existed
@@ -120,7 +120,7 @@ async def transition_state(
 
     Args:
         db:         redis.asyncio client.
-        saga_key:   Full Redis key (e.g. "saga:{order_id}").
+        saga_key:   Full Redis key (e.g. "{saga:<order_id>}").
         from_state: Expected current state (will be verified by Lua).
         to_state:   Target state.
         flag_field: Optional field name to set atomically (e.g. "stock_reserved").
@@ -162,7 +162,7 @@ async def get_saga(db, order_id: str) -> dict | None:
     Returns:
         Dict with string keys and values, or None if no record exists.
     """
-    raw = await db.hgetall(f"saga:{order_id}")
+    raw = await db.hgetall(f"{{saga:{order_id}}}")
     if not raw:
         return None
     return {k.decode(): v.decode() for k, v in raw.items()}
@@ -177,4 +177,4 @@ async def set_saga_error(db, order_id: str, error_message: str) -> None:
         order_id:      Order identifier.
         error_message: Error description to store.
     """
-    await db.hset(f"saga:{order_id}", "error_message", error_message)
+    await db.hset(f"{{saga:{order_id}}}", "error_message", error_message)

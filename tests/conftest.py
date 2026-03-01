@@ -126,8 +126,8 @@ async def payment_grpc_server(redis_db):
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def seed_test_data(redis_db):
     """Seed known test data into Redis for integration tests."""
-    await redis_db.set("test-item-1", msgpack.encode(StockValue(stock=100, price=10)))
-    await redis_db.set("test-user-1", msgpack.encode(UserValue(credit=1000)))
+    await redis_db.set("{item:test-item-1}", msgpack.encode(StockValue(stock=100, price=10)))
+    await redis_db.set("{user:test-user-1}", msgpack.encode(UserValue(credit=1000)))
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

@@ -25,7 +25,8 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
         self.db = db
 
     async def ChargePayment(self, request, context):
-        ikey = f"idempotency:{request.idempotency_key}"
+        user_key = f"{{user:{request.user_id}}}"
+        ikey = f"{{user:{request.user_id}}}:idempotency:{request.idempotency_key}"
         result = await self.db.eval(IDEMPOTENCY_ACQUIRE_LUA, 1, ikey, 30)
         if isinstance(result, bytes):
             result = result.decode()
@@ -38,7 +39,7 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
             return PaymentResponse(success=cached["success"], error_message=cached["error_message"])
 
         # First call — execute business logic
-        entry: bytes = await self.db.get(request.user_id)
+        entry: bytes = await self.db.get(user_key)
         if entry is None:
             fail = json.dumps({"success": False, "error_message": "user not found"})
             await self.db.set(ikey, fail, ex=86400)
@@ -51,13 +52,14 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
             await self.db.set(ikey, fail, ex=86400)
             return PaymentResponse(success=False, error_message="insufficient credit")
 
-        await self.db.set(request.user_id, msgpack.encode(user_entry))
+        await self.db.set(user_key, msgpack.encode(user_entry))
         success = json.dumps({"success": True, "error_message": ""})
         await self.db.set(ikey, success, ex=86400)
         return PaymentResponse(success=True, error_message="")
 
     async def RefundPayment(self, request, context):
-        ikey = f"idempotency:{request.idempotency_key}"
+        user_key = f"{{user:{request.user_id}}}"
+        ikey = f"{{user:{request.user_id}}}:idempotency:{request.idempotency_key}"
         result = await self.db.eval(IDEMPOTENCY_ACQUIRE_LUA, 1, ikey, 30)
         if isinstance(result, bytes):
             result = result.decode()
@@ -70,7 +72,7 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
             return PaymentResponse(success=cached["success"], error_message=cached["error_message"])
 
         # First call — execute business logic
-        entry: bytes = await self.db.get(request.user_id)
+        entry: bytes = await self.db.get(user_key)
         if entry is None:
             fail = json.dumps({"success": False, "error_message": "user not found"})
             await self.db.set(ikey, fail, ex=86400)
@@ -78,13 +80,13 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
 
         user_entry: UserValue = msgpack.decode(entry, type=UserValue)
         user_entry.credit += request.amount
-        await self.db.set(request.user_id, msgpack.encode(user_entry))
+        await self.db.set(user_key, msgpack.encode(user_entry))
         success = json.dumps({"success": True, "error_message": ""})
         await self.db.set(ikey, success, ex=86400)
         return PaymentResponse(success=True, error_message="")
 
     async def CheckPayment(self, request, context):
-        entry: bytes = await self.db.get(request.user_id)
+        entry: bytes = await self.db.get(f"{{user:{request.user_id}}}")
         if entry is None:
             return CheckPaymentResponse(success=False, error_message="user not found", credit=0)
         user_entry: UserValue = msgpack.decode(entry, type=UserValue)

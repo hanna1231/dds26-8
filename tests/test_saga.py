@@ -61,17 +61,17 @@ def new_user_id() -> str:
 
 async def seed_item(redis_db, item_id: str, stock: int, price: int) -> None:
     """Seed a stock item into the shared test Redis DB."""
-    await redis_db.set(item_id, msgpack.encode(StockValue(stock=stock, price=price)))
+    await redis_db.set(f"{{item:{item_id}}}", msgpack.encode(StockValue(stock=stock, price=price)))
 
 
 async def seed_user(redis_db, user_id: str, credit: int) -> None:
     """Seed a user into the shared test Redis DB."""
-    await redis_db.set(user_id, msgpack.encode(UserValue(credit=credit)))
+    await redis_db.set(f"{{user:{user_id}}}", msgpack.encode(UserValue(credit=credit)))
 
 
 async def get_item_stock(redis_db, item_id: str) -> int:
     """Return current stock count for item_id from Redis."""
-    raw = await redis_db.get(item_id)
+    raw = await redis_db.get(f"{{item:{item_id}}}")
     if raw is None:
         raise KeyError(f"item {item_id!r} not found")
     return msgpack.decode(raw, type=StockValue).stock
@@ -79,7 +79,7 @@ async def get_item_stock(redis_db, item_id: str) -> int:
 
 async def get_user_credit(redis_db, user_id: str) -> int:
     """Return current credit for user_id from Redis."""
-    raw = await redis_db.get(user_id)
+    raw = await redis_db.get(f"{{user:{user_id}}}")
     if raw is None:
         raise KeyError(f"user {user_id!r} not found")
     return msgpack.decode(raw, type=UserValue).credit
@@ -126,7 +126,7 @@ async def test_saga_state_transitions_valid(orchestrator_db, clean_orchestrator_
     """SAGA-02: Valid state transitions succeed and state is updated correctly."""
     order_id = new_order_id()
     await create_saga_record(orchestrator_db, order_id, "u1", [], 0)
-    saga_key = f"saga:{order_id}"
+    saga_key = f"{{saga:{order_id}}}"
 
     # STARTED -> STOCK_RESERVED
     ok = await transition_state(orchestrator_db, saga_key, "STARTED", "STOCK_RESERVED")
@@ -152,7 +152,7 @@ async def test_saga_state_transition_invalid_rejected(orchestrator_db, clean_orc
     """SAGA-02: Invalid transitions raise ValueError and state is unchanged."""
     order_id = new_order_id()
     await create_saga_record(orchestrator_db, order_id, "u1", [], 0)
-    saga_key = f"saga:{order_id}"
+    saga_key = f"{{saga:{order_id}}}"
 
     # STARTED -> COMPLETED is not a valid transition
     with pytest.raises(ValueError):
@@ -463,9 +463,9 @@ async def test_idempotency_keys_prevent_duplicate_side_effects(
     stock_after_checkout = await get_item_stock(redis_db, item_id)
     credit_after_checkout = await get_user_credit(redis_db, user_id)
 
-    # The SAGA uses deterministic idempotency keys derived from order_id
-    reserve_ikey = f"saga:{order_id}:step:reserve:{item_id}"
-    charge_ikey = f"saga:{order_id}:step:charge"
+    # The SAGA uses deterministic idempotency keys derived from order_id (hash-tagged for cluster co-location)
+    reserve_ikey = f"{{saga:{order_id}}}:step:reserve:{item_id}"
+    charge_ikey = f"{{saga:{order_id}}}:step:charge"
 
     # Replay stock reservation with same idempotency key — must return cached result
     # (Lua script returns cached JSON instead of executing business logic again)
