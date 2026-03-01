@@ -4,6 +4,7 @@ import uuid
 from collections import defaultdict
 
 import redis.asyncio as redis
+import redis.exceptions
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 import httpx
 import grpc.aio
@@ -113,10 +114,11 @@ async def batch_init_users(n: int, n_items: int, n_users: int, item_price: int):
                            total_cost=2*item_price)
         return value
 
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(generate_entry())
-                                  for i in range(n)}
     try:
-        await db.mset(kv_pairs)
+        pipe = db.pipeline(transaction=False)
+        for i in range(n):
+            pipe.set(f"{i}", msgpack.encode(generate_entry()))
+        await pipe.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for orders successful"})

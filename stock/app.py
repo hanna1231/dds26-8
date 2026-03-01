@@ -3,6 +3,7 @@ import os
 import uuid
 
 import redis.asyncio as redis
+import redis.exceptions
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 from msgspec import msgpack, Struct
@@ -83,10 +84,11 @@ async def batch_init_users(n: int, starting_stock: int, item_price: int):
     n = int(n)
     starting_stock = int(starting_stock)
     item_price = int(item_price)
-    kv_pairs: dict[str, bytes] = {f"{{item:{i}}}": msgpack.encode(StockValue(stock=starting_stock, price=item_price))
-                                  for i in range(n)}
     try:
-        await db.mset(kv_pairs)
+        pipe = db.pipeline(transaction=False)
+        for i in range(n):
+            pipe.set(f"{{item:{i}}}", msgpack.encode(StockValue(stock=starting_stock, price=item_price)))
+        await pipe.execute()
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({"msg": "Batch init for stock successful"})
