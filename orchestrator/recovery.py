@@ -104,7 +104,11 @@ async def recover_incomplete_sagas(db) -> None:
     now = int(time.time())
 
     async for key in db.scan_iter(match="{saga:*", count=100):
-        raw = await db.hgetall(key)
+        try:
+            raw = await db.hgetall(key)
+        except Exception:
+            # Skip non-hash keys (e.g., Redis Streams like {saga:events}:checkout)
+            continue
         if not raw:
             continue
         saga = {k.decode(): v.decode() for k, v in raw.items()}

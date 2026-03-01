@@ -53,7 +53,7 @@ benchmark:
 	@echo '{"ORDER_URL": "http://localhost:8000", "PAYMENT_URL": "http://localhost:8000", "STOCK_URL": "http://localhost:8000"}' > wdm-project-benchmark/urls.json
 	@pip install -r wdm-project-benchmark/requirements.txt -q 2>/dev/null || true
 	@echo "Running consistency test against http://localhost:8000..."
-	cd wdm-project-benchmark/consistency-test && python run_consistency_test.py
+	cd wdm-project-benchmark/consistency-test && python3 run_consistency_test.py
 
 # Run kill-container consistency test for a single service
 # Usage: make kill-test SERVICE=stock-service
