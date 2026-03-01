@@ -10,8 +10,8 @@ import time
 
 import msgspec.json
 
-STREAM_NAME = "saga:checkout:events"
-DEAD_LETTERS_STREAM = "saga:dead-letters"
+STREAM_NAME = "{saga:events}:checkout"
+DEAD_LETTERS_STREAM = "{saga:events}:dead-letters"
 STREAM_MAXLEN = 10_000
 
 _dropped_events = 0

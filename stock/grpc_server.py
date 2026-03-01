@@ -26,7 +26,8 @@ class StockServiceServicer(StockServiceServicerBase):
         self.db = db
 
     async def ReserveStock(self, request, context):
-        ikey = f"idempotency:{request.idempotency_key}"
+        item_key = f"{{item:{request.item_id}}}"
+        ikey = f"{{item:{request.item_id}}}:idempotency:{request.idempotency_key}"
         result = await self.db.eval(IDEMPOTENCY_ACQUIRE_LUA, 1, ikey, 30)
         if isinstance(result, bytes):
             result = result.decode()
@@ -40,7 +41,7 @@ class StockServiceServicer(StockServiceServicerBase):
             return StockResponse(success=cached["success"], error_message=cached["error_message"])
 
         # First call — execute business logic
-        entry: bytes = await self.db.get(request.item_id)
+        entry: bytes = await self.db.get(item_key)
         if entry is None:
             fail = json.dumps({"success": False, "error_message": "item not found"})
             await self.db.set(ikey, fail, ex=86400)
@@ -53,13 +54,14 @@ class StockServiceServicer(StockServiceServicerBase):
             await self.db.set(ikey, fail, ex=86400)
             return StockResponse(success=False, error_message="insufficient stock")
 
-        await self.db.set(request.item_id, msgpack.encode(item_entry))
+        await self.db.set(item_key, msgpack.encode(item_entry))
         success = json.dumps({"success": True, "error_message": ""})
         await self.db.set(ikey, success, ex=86400)
         return StockResponse(success=True, error_message="")
 
     async def ReleaseStock(self, request, context):
-        ikey = f"idempotency:{request.idempotency_key}"
+        item_key = f"{{item:{request.item_id}}}"
+        ikey = f"{{item:{request.item_id}}}:idempotency:{request.idempotency_key}"
         result = await self.db.eval(IDEMPOTENCY_ACQUIRE_LUA, 1, ikey, 30)
         if isinstance(result, bytes):
             result = result.decode()
@@ -72,7 +74,7 @@ class StockServiceServicer(StockServiceServicerBase):
             return StockResponse(success=cached["success"], error_message=cached["error_message"])
 
         # First call — execute business logic
-        entry: bytes = await self.db.get(request.item_id)
+        entry: bytes = await self.db.get(item_key)
         if entry is None:
             fail = json.dumps({"success": False, "error_message": "item not found"})
             await self.db.set(ikey, fail, ex=86400)
@@ -80,13 +82,13 @@ class StockServiceServicer(StockServiceServicerBase):
 
         item_entry: StockValue = msgpack.decode(entry, type=StockValue)
         item_entry.stock += request.quantity
-        await self.db.set(request.item_id, msgpack.encode(item_entry))
+        await self.db.set(item_key, msgpack.encode(item_entry))
         success = json.dumps({"success": True, "error_message": ""})
         await self.db.set(ikey, success, ex=86400)
         return StockResponse(success=True, error_message="")
 
     async def CheckStock(self, request, context):
-        entry: bytes = await self.db.get(request.item_id)
+        entry: bytes = await self.db.get(f"{{item:{request.item_id}}}")
         if entry is None:
             return CheckStockResponse(success=False, error_message="item not found", stock=0, price=0)
         item_entry: StockValue = msgpack.decode(entry, type=StockValue)

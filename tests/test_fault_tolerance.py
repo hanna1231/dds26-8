@@ -51,7 +51,7 @@ def _reset_breaker(breaker):
 
 async def seed_saga(db, order_id, state, updated_at, **extra_fields):
     """Seed a SAGA record directly in Redis for recovery tests."""
-    saga_key = f"saga:{order_id}"
+    saga_key = f"{{saga:{order_id}}}"
     mapping = {
         "order_id": order_id,
         "state": state,
@@ -371,10 +371,10 @@ async def test_no_sagas_stranded_after_recovery(
 
     await recover_incomplete_sagas(orchestrator_db)
 
-    # Scan all saga:* keys and verify every SAGA is in a terminal state
+    # Scan all {saga:*} keys and verify every SAGA is in a terminal state
     terminal_states = {"COMPLETED", "FAILED"}
     non_terminal_keys = []
-    async for key in orchestrator_db.scan_iter(match="saga:*", count=100):
+    async for key in orchestrator_db.scan_iter(match="{saga:*", count=100):
         raw = await orchestrator_db.hgetall(key)
         saga = {k.decode(): v.decode() for k, v in raw.items()}
         if saga.get("state") not in terminal_states:
