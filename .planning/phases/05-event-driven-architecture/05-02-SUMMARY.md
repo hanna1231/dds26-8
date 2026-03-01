@@ -133,6 +133,14 @@ None - no external service configuration required.
 - All existing tests unbroken: `pytest tests/test_saga.py tests/test_fault_tolerance.py` still passes (22 passed)
 - Redis Streams event system is production-ready and test-verified
 
+## Self-Check: PASSED
+
+- `tests/test_events.py` — FOUND
+- `.planning/phases/05-event-driven-architecture/05-02-SUMMARY.md` — FOUND
+- Commit `cc27978` (Task 1) — FOUND
+- Commit `99842d5` (Task 2) — FOUND
+- Commit `400aae8` (metadata) — FOUND
+
 ---
 *Phase: 05-event-driven-architecture*
 *Completed: 2026-02-28*
