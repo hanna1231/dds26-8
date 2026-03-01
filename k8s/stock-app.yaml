@@ -10,6 +10,9 @@ spec:
     - port: 5000
       name: http
       targetPort: 5000
+    - port: 50051
+      name: grpc
+      targetPort: 50051
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -28,23 +31,34 @@ spec:
       containers:
         - name: stock
           image: stock:latest
-          resources:
-            limits:
-              memory: "1Gi"
-              cpu: "1"
-            requests:
-              memory: "1Gi"
-              cpu: "1"
-          command: ["gunicorn"]
-          args: ["-b", "0.0.0.0:5000", "app:app"]
+          command: ["uvicorn"]
+          args: ["app:app", "--host", "0.0.0.0", "--port", "5000", "--workers", "2"]
           ports:
             - containerPort: 5000
+            - containerPort: 50051
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
           env:
-            - name: REDIS_HOST
-              value: redis-master
-            - name: REDIS_PORT
-              value: '6379'
+            - name: REDIS_NODE_HOST
+              value: "stock-redis-cluster-redis-cluster"
             - name: REDIS_PASSWORD
               value: "redis"
-            - name: REDIS_DB
-              value: "0"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3

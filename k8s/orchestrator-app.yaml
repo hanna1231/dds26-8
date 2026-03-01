@@ -1,37 +1,41 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: order-service
+  name: orchestrator-service
 spec:
   type: ClusterIP
   selector:
-    component: order
+    component: orchestrator
   ports:
     - port: 5000
       name: http
       targetPort: 5000
+    - port: 50053
+      name: grpc
+      targetPort: 50053
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: order-deployment
+  name: orchestrator-deployment
 spec:
   replicas: 1
   selector:
     matchLabels:
-      component: order
+      component: orchestrator
   template:
     metadata:
       labels:
-        component: order
+        component: orchestrator
     spec:
       containers:
-        - name: order
-          image: order:latest
+        - name: orchestrator
+          image: orchestrator:latest
           command: ["uvicorn"]
-          args: ["app:app", "--host", "0.0.0.0", "--port", "5000", "--workers", "2"]
+          args: ["app:app", "--host", "0.0.0.0", "--port", "5000", "--workers", "1"]
           ports:
             - containerPort: 5000
+            - containerPort: 50053
           resources:
             requests:
               cpu: 500m
@@ -41,13 +45,13 @@ spec:
               memory: 1Gi
           env:
             - name: REDIS_NODE_HOST
-              value: "order-redis-cluster-redis-cluster"
+              value: "payment-redis-cluster-redis-cluster"
             - name: REDIS_PASSWORD
               value: "redis"
-            - name: GATEWAY_URL
-              value: "http://nginx-ingress-nginx-controller:80"
-            - name: ORCHESTRATOR_GRPC_ADDR
-              value: "orchestrator-service:50053"
+            - name: STOCK_GRPC_ADDR
+              value: "stock-service:50051"
+            - name: PAYMENT_GRPC_ADDR
+              value: "payment-service:50051"
           livenessProbe:
             httpGet:
               path: /health
