@@ -51,7 +51,7 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Redis Cluster configured per service domain for high availability (automatic failover)
+- [x] **INFRA-01**: Redis Cluster configured per service domain for high availability (automatic failover)
 - [ ] **INFRA-02**: Kubernetes HPA configured for auto-scaling service replicas
 - [ ] **INFRA-03**: System runs within 20 CPU benchmark constraint
 - [ ] **INFRA-04**: Docker Compose updated for local development with new architecture
@@ -130,7 +130,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVENT-01 | Phase 5 | Complete |
 | EVENT-02 | Phase 5 | Complete |
 | EVENT-03 | Phase 5 | Complete |
-| INFRA-01 | Phase 6 | Pending |
+| INFRA-01 | Phase 6 | Complete |
 | INFRA-02 | Phase 6 | Pending |
 | INFRA-03 | Phase 6 | Pending |
 | INFRA-04 | Phase 6 | Pending |
