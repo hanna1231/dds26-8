@@ -6,9 +6,9 @@ status: unknown
 last_updated: "2026-03-01T09:01:51.091Z"
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 21
-  completed_plans: 20
+  completed_plans: 21
 ---
 
 # Project State
@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 
 ## Current Position
 
-Phase: 6 of 6 (Infrastructure)
-Plan: 3 of 3 in current phase
-Status: Phase 6 COMPLETE (3/3 plans done)
-Last activity: 2026-03-01 — Completed 06-03 (Docker Compose Redis Clusters + Makefile)
+Phase: 7 of 7 (Validation and Delivery)
+Plan: 1 of 3 in current phase (plan 07-01 complete)
+Status: Phase 7 IN PROGRESS (1/3 plans done)
+Last activity: 2026-03-01 — Completed 07-01 (Integration Tests + Benchmark)
 
-Progress: [██████████] ~100% (6 phases complete)
+Progress: [██████████] ~100% (7 phases active, 21/21 plans complete)
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [██████████] ~100% (6 phases complete)
 | Phase 06-infrastructure P03 | 5 | 2 tasks | 6 files |
 | Phase 07-validation-and-delivery P03 | 2 | 2 tasks | 2 files |
 | Phase 07-validation-and-delivery P02 | 7 | 2 tasks | 4 files |
+| Phase 07-validation-and-delivery P01 | 90 | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,9 @@ Recent decisions affecting current work:
 - [Phase 07-validation-and-delivery]: Decision-focused depth: what was chosen, alternatives considered, why — enables team members to answer instructor questions for any architectural choice
 - [Phase 07-validation-and-delivery]: SAGA_STALENESS_SECONDS passed via docker-compose.yml env var override (not docker exec) — simplest approach, works at container launch
 - [Phase 07-validation-and-delivery]: kill-test Makefile target starts cluster with SAGA_STALENESS_SECONDS=10 enabling 30s kill-test recovery window
+- [Phase 07-validation-and-delivery 07-01]: CAS retry loop chosen over distributed locks for stock/payment atomicity — Lua compare-and-swap in single EVAL, RETRY signal drives Python loop
+- [Phase 07-validation-and-delivery 07-01]: Custom redis:7.2 image replaces unavailable bitnami/redis-cluster:8.0; entrypoint.sh replicates bitnami env var API
+- [Phase 07-validation-and-delivery 07-01]: Benchmark Makefile target uses python3 for portability; wdm-project-benchmark excluded from git via .gitignore
 
 ### Pending Todos
 
@@ -141,6 +145,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01T08:30:00Z
-Stopped at: Completed 06-02-PLAN.md (K8s Manifests, HPA, Redis Cluster Helm values); Phase 6 plan 2 of 3 done
+Last session: 2026-03-01T09:35:00Z
+Stopped at: Completed 07-01-PLAN.md (Integration Tests + Benchmark, 0 consistency violations)
 Resume file: None
