@@ -6,24 +6,24 @@ Meetings
 12 March
 
 Contributions
-Hanna: 
+Hanna:
 - Researched consistency.
 - Researched saga, different microservices patterns and where to start.
 - Helped draw up the system architecture.
 - Attended the lectures.
 
-Amy: 
+Amy:
 - Researched transaction performance.
 - Helped draw up the system architecture.
 - Attended the lectures.
 
-Daniel: 
+Daniel:
 - Researched scalability.
 - Helped draw up the system architecture.
 - Asked Claude to implement our architecture.
 - Attended the lectures.
 
-Clement: 
+Clement:
 - Researched fault tolerance.
 - Researched different microservices patterns and distributed transaction methods.
 - Helped draw up the system architecture.
@@ -31,4 +31,3 @@ Clement:
 
 Zahari:
 - Only attended the first meeting online.
-
