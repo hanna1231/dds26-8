@@ -59,9 +59,9 @@ Requirements for Phase 1 (due March 13). Each maps to roadmap phases.
 
 ### Documentation
 
-- [ ] **DOCS-01**: Architecture design document written in markdown for final presentation
-- [ ] **DOCS-02**: Architecture doc covers: SAGA pattern, gRPC design, Redis Cluster topology, Kubernetes scaling, event-driven design, fault tolerance strategy
-- [ ] **DOCS-03**: contributions.txt file at repo root with team member contributions
+- [x] **DOCS-01**: Architecture design document written in markdown for final presentation
+- [x] **DOCS-02**: Architecture doc covers: SAGA pattern, gRPC design, Redis Cluster topology, Kubernetes scaling, event-driven design, fault tolerance strategy
+- [x] **DOCS-03**: contributions.txt file at repo root with team member contributions
 
 ### Testing & Benchmark
 
@@ -135,9 +135,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-03 | Phase 6 | Complete |
 | INFRA-04 | Phase 6 | Complete |
 | INFRA-05 | Phase 6 | Complete |
-| DOCS-01 | Phase 7 | Pending |
-| DOCS-02 | Phase 7 | Pending |
-| DOCS-03 | Phase 7 | Pending |
+| DOCS-01 | Phase 7 | Complete |
+| DOCS-02 | Phase 7 | Complete |
+| DOCS-03 | Phase 7 | Complete |
 | TEST-01 | Phase 7 | Pending |
 | TEST-02 | Phase 7 | Pending |
 | TEST-03 | Phase 7 | Pending |
