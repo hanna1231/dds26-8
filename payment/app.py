@@ -3,6 +3,7 @@ import os
 import uuid
 
 import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 from msgspec import msgpack, Struct
 from quart import Quart, jsonify, abort, Response
@@ -13,16 +14,21 @@ DB_ERROR_STR = "DB error"
 
 app = Quart("payment-service")
 
-db: redis.Redis = None
+db = None
 
 
 @app.before_serving
 async def startup():
     global db
-    db = redis.Redis(host=os.environ['REDIS_HOST'],
-                     port=int(os.environ['REDIS_PORT']),
-                     password=os.environ['REDIS_PASSWORD'],
-                     db=int(os.environ['REDIS_DB']))
+    node_host = os.environ['REDIS_NODE_HOST']
+    node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
+    db = RedisCluster(
+        startup_nodes=[ClusterNode(node_host, node_port)],
+        password=os.environ['REDIS_PASSWORD'],
+        decode_responses=False,
+        require_full_coverage=True,
+    )
+    await db.initialize()
     app.add_background_task(serve_grpc, db)
 
 
@@ -39,7 +45,7 @@ class UserValue(Struct):
 async def get_user_from_db(user_id: str) -> UserValue | None:
     try:
         # get serialized data
-        entry: bytes = await db.get(user_id)
+        entry: bytes = await db.get(f"{{user:{user_id}}}")
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     # deserialize data if it exists else return null
@@ -50,12 +56,21 @@ async def get_user_from_db(user_id: str) -> UserValue | None:
     return entry
 
 
+@app.get('/health')
+async def health():
+    try:
+        await db.ping()
+        return jsonify({"status": "ok"}), 200
+    except Exception:
+        return jsonify({"status": "unhealthy"}), 503
+
+
 @app.post('/create_user')
 async def create_user():
     key = str(uuid.uuid4())
     value = msgpack.encode(UserValue(credit=0))
     try:
-        await db.set(key, value)
+        await db.set(f"{{user:{key}}}", value)
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return jsonify({'user_id': key})
@@ -65,7 +80,7 @@ async def create_user():
 async def batch_init_users(n: int, starting_money: int):
     n = int(n)
     starting_money = int(starting_money)
-    kv_pairs: dict[str, bytes] = {f"{i}": msgpack.encode(UserValue(credit=starting_money))
+    kv_pairs: dict[str, bytes] = {f"{{user:{i}}}": msgpack.encode(UserValue(credit=starting_money))
                                   for i in range(n)}
     try:
         await db.mset(kv_pairs)
@@ -91,7 +106,7 @@ async def add_credit(user_id: str, amount: int):
     # update credit, serialize and update database
     user_entry.credit += int(amount)
     try:
-        await db.set(user_id, msgpack.encode(user_entry))
+        await db.set(f"{{user:{user_id}}}", msgpack.encode(user_entry))
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)
@@ -106,7 +121,7 @@ async def remove_credit(user_id: str, amount: int):
     if user_entry.credit < 0:
         abort(400, f"User: {user_id} credit cannot get reduced below zero!")
     try:
-        await db.set(user_id, msgpack.encode(user_entry))
+        await db.set(f"{{user:{user_id}}}", msgpack.encode(user_entry))
     except redis.exceptions.RedisError:
         return abort(400, DB_ERROR_STR)
     return Response(f"User: {user_id} credit updated to: {user_entry.credit}", status=200)

@@ -1,6 +1,7 @@
 import os
 
 import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
 from quart import Quart, jsonify
 from grpc_server import serve_grpc, stop_grpc_server
 from client import init_grpc_clients, close_grpc_clients
@@ -9,19 +10,22 @@ from consumers import setup_consumer_groups, compensation_consumer, audit_consum
 from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
 
 app = Quart("orchestrator-service")
-db: redis.Redis = None
+db = None
 _stop_event = None
 
 
 @app.before_serving
 async def startup():
     global db
-    db = redis.Redis(
-        host=os.environ['REDIS_HOST'],
-        port=int(os.environ['REDIS_PORT']),
+    node_host = os.environ['REDIS_NODE_HOST']
+    node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
+    db = RedisCluster(
+        startup_nodes=[ClusterNode(node_host, node_port)],
         password=os.environ['REDIS_PASSWORD'],
-        db=int(os.environ['REDIS_DB']),
+        decode_responses=False,
+        require_full_coverage=True,
     )
+    await db.initialize()
     await init_grpc_clients()
     await recover_incomplete_sagas(db)
     await setup_consumer_groups(db)
@@ -42,6 +46,11 @@ async def shutdown():
 
 @app.get('/health')
 async def health():
+    try:
+        await db.ping()
+    except Exception:
+        return jsonify({"status": "unhealthy"}), 503
+
     lag_info = {}
     try:
         groups = await db.xinfo_groups(STREAM_NAME)
