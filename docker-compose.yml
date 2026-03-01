@@ -58,6 +58,7 @@ services:
       - PAYMENT_GRPC_ADDR=payment-service:50051
       - REDIS_NODE_HOST=${ORCH_REDIS_HOST:-payment-redis-0}
       - REDIS_PASSWORD=redis
+      - SAGA_STALENESS_SECONDS=${SAGA_STALENESS_SECONDS:-300}
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     depends_on:
       - stock-service
