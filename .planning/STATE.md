@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T08:10:55.426Z"
+last_updated: "2026-03-01T08:15:59.182Z"
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 18
-  completed_plans: 16
+  completed_plans: 18
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-27)
 ## Current Position
 
 Phase: 6 of 6 (Infrastructure)
-Plan: 1 of 3 in current phase
-Status: Phase 6 IN PROGRESS (1/3 plans done)
-Last activity: 2026-03-01 — Completed 06-01 (Redis Cluster Client Migration)
+Plan: 3 of 3 in current phase
+Status: Phase 6 COMPLETE (3/3 plans done)
+Last activity: 2026-03-01 — Completed 06-03 (Docker Compose Redis Clusters + Makefile)
 
-Progress: [█████████░] ~88% (5 phases complete + 1/3 of phase 6)
+Progress: [██████████] ~100% (6 phases complete)
 
 ## Performance Metrics
 
@@ -62,6 +62,8 @@ Progress: [█████████░] ~88% (5 phases complete + 1/3 of phas
 | Phase 05-event-driven-architecture P01 | 374 | 2 tasks | 4 files |
 | Phase 05-event-driven-architecture P02 | 10 | 2 tasks | 1 files |
 | Phase 06-infrastructure P01 | 675 | 2 tasks | 17 files |
+| Phase 06-infrastructure P02 | 15 | 2 tasks | 12 files |
+| Phase 06-infrastructure P03 | 5 | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -116,6 +118,10 @@ Recent decisions affecting current work:
 - [Phase 05-event-driven-architecture]: Patch grpc_server module (not client) for monkeypatching: direct import bindings require patching at call site
 - [Phase 05-event-driven-architecture]: Pre-set stop_event before consumer creation to avoid spin-loop event loop starvation in unit tests
 - [Phase 06-infrastructure]: RedisCluster startup_nodes from REDIS_NODE_HOST env var; hash tags {item:}, {user:}, {saga:} for slot co-location; stream names use shared {saga:events} hash tag
+- [Phase 06-infrastructure]: Orchestrator shares payment-redis-cluster (not a 4th cluster) — {saga:} hash tag prefix isolates keys
+- [Phase 06-infrastructure]: Bitnami redis-cluster service naming: <release>-redis-cluster, so REDIS_NODE_HOST=order-redis-cluster-redis-cluster
+- [Phase 06-infrastructure]: Per-domain Redis nodes use profiles: full; shared nodes use profiles: simple — prevents topology overlap when switching between dev modes
+- [Phase 06-infrastructure]: Application services have no profile and rely on restart: always + RedisCluster retry for Redis availability across both profiles
 
 ### Pending Todos
 
@@ -129,6 +135,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01T08:10:00Z
-Stopped at: Completed 06-01-PLAN.md (Redis Cluster Client Migration); Phase 6 plan 1 of 3 done
+Last session: 2026-03-01T08:30:00Z
+Stopped at: Completed 06-02-PLAN.md (K8s Manifests, HPA, Redis Cluster Helm values); Phase 6 plan 2 of 3 done
 Resume file: None
