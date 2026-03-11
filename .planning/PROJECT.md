@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A distributed microservice-based checkout system for the TU Delft Distributed Data Systems course. Three services (Order, Stock, Payment) coordinate to handle e-commerce checkout transactions with consistency guarantees, fault tolerance, and high performance. Built on an existing Flask+Redis template that must be upgraded with proper distributed transaction protocols (SAGAs), async performance (Quart+Uvicorn), gRPC for inter-service calls, and Kubernetes-based scaling.
+A distributed microservice-based checkout system for the TU Delft Distributed Data Systems course. Four services (Order, Stock, Payment, SAGA Orchestrator) coordinate e-commerce checkout transactions using the SAGA pattern with gRPC communication, Redis Streams event-driven architecture, and Redis Cluster for high availability. Built on the wdm-project-template, upgraded from Flask+Redis to Quart+Uvicorn with async Redis, gRPC inter-service calls, and Kubernetes-based scaling.
 
 ## Core Value
 
@@ -12,94 +12,82 @@ Checkout transactions must never lose money or item counts — consistency is no
 
 ### Validated
 
-<!-- Existing capabilities from the template codebase -->
-
-- ✓ Order CRUD (create, find, addItem) — existing
-- ✓ Stock CRUD (create item, find, add, subtract) — existing
-- ✓ Payment CRUD (create user, find user, add funds, pay) — existing
-- ✓ Nginx API gateway routing to all three services — existing
-- ✓ Redis persistence with msgpack serialization — existing
-- ✓ Docker containerization for all services — existing
-- ✓ Basic checkout flow with compensating rollback — existing
-- ✓ Integration test suite — existing
-- ✓ Kubernetes deployment manifests — existing
+- ✓ Quart+Uvicorn async migration for all services — v1.0
+- ✓ Async Redis (redis.asyncio + hiredis) for all operations — v1.0
+- ✓ API contract preservation (identical routes/responses) — v1.0
+- ✓ gRPC proto definitions for Stock and Payment — v1.0
+- ✓ Dual-server (HTTP :5000 + gRPC :50051) on Stock and Payment — v1.0
+- ✓ SAGA orchestrator with gRPC-only checkout path — v1.0
+- ✓ Idempotency keys on all gRPC mutation RPCs — v1.0
+- ✓ Redis-persisted SAGA state with Lua CAS transitions — v1.0
+- ✓ Explicit SAGA states with validated transitions — v1.0
+- ✓ Compensation with exponential backoff retry-until-success — v1.0
+- ✓ Exactly-once checkout semantics via order_id idempotency — v1.0
+- ✓ Lua atomic stock/payment operations preventing overselling — v1.0
+- ✓ Circuit breakers preventing cascade failures — v1.0
+- ✓ Startup SAGA recovery scanner — v1.0
+- ✓ Container-kill consistency (no lost money/items after recovery) — v1.0
+- ✓ Redis Streams for SAGA lifecycle events with consumer groups — v1.0
+- ✓ At-least-once event delivery with XAUTOCLAIM — v1.0
+- ✓ Per-domain Redis Cluster (3+3 nodes) with AOF and noeviction — v1.0
+- ✓ Kubernetes HPA for domain service auto-scaling — v1.0
+- ✓ System runs within 20 CPU benchmark constraint — v1.0
+- ✓ Docker Compose + Kubernetes deployment — v1.0
+- ✓ Architecture design document — v1.0
+- ✓ contributions.txt placeholder — v1.0
+- ✓ 37 integration tests passing — v1.0
+- ✓ wdm-project-benchmark with 0 consistency violations — v1.0
+- ✓ Automated kill-test scripts — v1.0
 
 ### Active
 
-<!-- Phase 1 scope: 2PC + SAGAs + fault tolerance, due March 13 -->
-
-- [ ] Migrate from Flask+Gunicorn to Quart+Uvicorn for async performance
-- [ ] Implement SAGA pattern for checkout transaction coordination
-- [ ] Build SAGA orchestrator as foundation for Phase 2 abstraction
-- [ ] Replace synchronous REST inter-service calls with gRPC
-- [ ] Implement compensating transactions with proper rollback guarantees
-- [ ] Add fault tolerance: system recovers when any single container dies mid-transaction
-- [ ] Persist SAGA state so incomplete transactions resume after crash recovery
-- [ ] Choose and integrate message queue (Kafka or Redis Streams) for event-driven coordination
-- [ ] Configure Redis Cluster for database scaling and high availability
-- [ ] Set up Kubernetes autoscaling (HPA) for service instances
-- [ ] Achieve consistency under concurrent checkout operations
-- [ ] Handle partial failures: payment service crash after stock deduction triggers rollback on recovery
-- [ ] Ensure system passes the provided benchmark (locust stress + consistency tests)
-- [ ] Write architectural design document for final presentation
-- [ ] Create contributions.txt
+_No active requirements — start `/gsd:new-milestone` to define v2.0 scope._
 
 ### Out of Scope
 
-- Phase 2 SAGA Orchestrator abstraction as separate artifact — deferred to April 1 deadline, but architecture designed to support it
+- Phase 2 SAGA Orchestrator abstraction as separate artifact — deferred to April 1 deadline
 - Authentication/authorization — not required by project spec
-- OAuth, rate limiting, API keys — not part of evaluation criteria
-- Custom benchmark creation — bonus points only, defer if time-constrained
-- Mobile/frontend clients — API-only evaluation
+- Custom benchmark creation — bonus points only
+- Two-Phase Commit (2PC) — Redis doesn't support XA transactions
+- Full event sourcing — significant complexity for zero grade benefit
+- Distributed locking (Redlock) — idempotency + optimistic concurrency is correct approach
 
 ## Context
+
+**Shipped:** v1.0 on 2026-03-11
+**Codebase:** 5,553 LOC Python across 4 services + tests
+**Tech stack:** Quart+Uvicorn, gRPC (grpcio), Redis Cluster (redis.asyncio), Redis Streams, Lua scripting, Docker Compose, Kubernetes + Helm
+**Architecture:** SAGA orchestrator pattern with gRPC communication, event-driven coordination via Redis Streams, per-domain Redis Cluster HA, circuit breakers + startup recovery for fault tolerance
 
 **Course:** Distributed Data Systems (DDS), TU Delft Master's
 **Team:** dds26-8
 **Template:** https://github.com/delftdata/wdm-project-template
-**Benchmark:** https://github.com/delftdata/wdm-project-benchmark (must work without changes against 20 CPUs max)
-
-**Evaluation criteria (from PDF):**
-1. **Consistency** — no lost money or item counts
-2. **Performance** — latency and throughput
-3. **Architecture Difficulty** — synchronous, asynchronous, event-driven (harder = more points)
-
-**Evaluation process:**
-- Benchmark run against 20 CPUs max
-- Kill one container at a time, let system recover, then fail another
-- System must remain consistent throughout
-- Rigorous interview at end of course
-
-**Existing codebase state:**
-- Three Flask microservices with basic CRUD and simple rollback
-- No proper distributed transaction protocol (just application-level compensating actions)
-- Synchronous HTTP calls between services (slow, blocking)
-- No fault tolerance for mid-transaction crashes
-- No message queue or event-driven architecture
-- Single Redis instances (no clustering/HA)
+**Benchmark:** https://github.com/delftdata/wdm-project-benchmark
 
 ## Constraints
 
 - **Language**: Python only (course requirement)
 - **API Contract**: External-facing API routes cannot change (template contract)
-- **Database**: Redis (course requirement), Redis Cluster for scaling
-- **Deployment**: Must run on Kubernetes, benchmarked against 20 CPUs
-- **Framework**: Quart+Uvicorn (team decision — async Flask-compatible, allowed by course)
-- **Inter-service sync**: gRPC (team decision — faster than REST for service-to-service)
-- **Transaction pattern**: SAGA with orchestrator (team decision — Redis doesn't support XA/2PC)
-- **Message queue**: TBD (Kafka vs Redis Streams — decide during research)
-- **Timeline**: Phase 1 due March 13, Phase 2 due April 1
+- **Database**: Redis Cluster (course requirement)
+- **Deployment**: Kubernetes, benchmarked against 20 CPUs
+- **Framework**: Quart+Uvicorn (async Flask-compatible)
+- **Inter-service**: gRPC (binary protocol, faster than REST)
+- **Transaction pattern**: SAGA with orchestrator (Redis doesn't support 2PC)
+- **Events**: Redis Streams (same client, no extra infra, fits CPU budget)
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Quart+Uvicorn over Flask+Gunicorn | Async I/O for concurrent gRPC/Redis calls, higher throughput | — Pending |
-| SAGA over 2PC | Redis doesn't support XA transactions; SAGAs natural fit for compensation-based consistency | — Pending |
-| gRPC for inter-service calls | Lower latency than REST, binary protocol, streaming support | — Pending |
-| Redis Cluster for DB scaling | HA + sharding built into Redis, aligns with course Redis requirement | — Pending |
-| SAGA orchestrator as separate service | Clean separation prepares for Phase 2 abstraction requirement | — Pending |
-| Kafka vs Redis Streams | TBD — research phase will determine best fit | — Pending |
+| Quart+Uvicorn over Flask+Gunicorn | Async I/O for concurrent gRPC/Redis calls | ✓ Good — all services async, clean migration |
+| SAGA over 2PC | Redis doesn't support XA transactions | ✓ Good — crash recovery works, compensation reliable |
+| gRPC for inter-service calls | Lower latency than REST, binary protocol | ✓ Good — idempotency keys built into proto |
+| Redis Cluster for DB scaling | HA + sharding, aligns with course requirement | ✓ Good — automatic failover, hash tags work |
+| Redis Streams over Kafka | Same redis-py client, no new infra, fits CPU budget | ✓ Good — consumer groups + XAUTOCLAIM sufficient |
+| SAGA orchestrator as single replica | Avoids split-brain; domain services scale via HPA | ✓ Good — no coordination issues |
+| Lua CAS for atomicity | Single EVAL prevents TOCTOU, no distributed locks needed | ✓ Good — 0 consistency violations under benchmark |
+| Fire-and-forget event publishing | Checkout never blocked by event failures | ✓ Good — events are audit trail, not critical path |
+| Custom redis:7.2 image | bitnami/redis-cluster:8.0 unavailable | ⚠️ Revisit — works but adds maintenance burden |
 
 ---
-*Last updated: 2026-02-27 after initialization*
+*Last updated: 2026-03-11 after v1.0 milestone*
