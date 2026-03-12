@@ -25,10 +25,11 @@ StockServiceServicer = stock_grpc_mod.StockServiceServicer
 from stock_pb2_grpc import add_StockServiceServicer_to_server  # noqa: E402
 sys.path.pop(0)
 
-# Import payment servicer and pb2 stubs (clear grpc_server from cache first)
+# Import payment servicer and pb2 stubs (clear grpc_server and operations from cache first)
 sys.path.insert(0, _payment_path)
-if "grpc_server" in sys.modules:
-    del sys.modules["grpc_server"]
+for _mod in ("grpc_server", "operations"):
+    if _mod in sys.modules:
+        del sys.modules[_mod]
 import grpc_server as payment_grpc_mod  # noqa: E402
 
 PaymentServiceServicer = payment_grpc_mod.PaymentServiceServicer
