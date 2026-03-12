@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
-status: completed
-stopped_at: Completed 11-02-PLAN.md
-last_updated: "2026-03-12T10:25:13.396Z"
-last_activity: 2026-03-12 -- Completed 11-02 2PC participants
+status: in-progress
+stopped_at: Completed 12-01-PLAN.md
+last_updated: "2026-03-12T10:49:00.000Z"
+last_activity: 2026-03-12 -- Completed 12-01 2PC transport layer
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 11 - 2PC State Machine & Participants
+**Current focus:** Phase 12 - 2PC Coordinator & Recovery
 
 ## Current Position
 
-Phase: 11 of 13 (2PC State Machine & Participants)
-Plan: 2 of 2 in current phase
-Status: completed
-Last activity: 2026-03-12 -- Completed 11-02 2PC participants
+Phase: 12 of 13 (2PC Coordinator & Recovery)
+Plan: 1 of 2 in current phase
+Status: in-progress
+Last activity: 2026-03-12 -- Completed 12-01 2PC transport layer
 
-Progress: [██████████] 100%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██████████] 100%
 | Phase 10 P01 | 2min | 2 tasks | 5 files |
 | Phase 11 P01 | 2min | 2 tasks | 3 files |
 | Phase 11 P02 | 4min | 3 tasks | 3 files |
+| Phase 12 P01 | 3min | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,7 @@ Recent decisions affecting current work:
 - [11-01]: Mirror saga.py pattern exactly for TPC state machine (same Lua CAS, same API shape)
 - [11-02]: Hold key stores quantity/amount as string; idempotency via hold key EXISTS check
 - [11-02]: COMMIT always idempotent (DEL on missing key is no-op); ABORT returns success when hold key gone
+- [12-01]: 2PC transport wrappers use order_id (not idempotency_key) matching operations.py signatures
 
 ### Pending Todos
 
@@ -92,6 +94,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T10:16:38Z
-Stopped at: Completed 11-02-PLAN.md
+Last session: 2026-03-12T10:49:00Z
+Stopped at: Completed 12-01-PLAN.md
 Resume file: None

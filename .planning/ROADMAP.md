@@ -106,7 +106,7 @@ Plans:
   3. Recovery scanner distinguishes SAGA and 2PC transactions by protocol field and applies correct recovery logic
   4. Setting `TRANSACTION_PATTERN=saga` uses SAGA; setting `TRANSACTION_PATTERN=2pc` uses 2PC -- no other code changes needed
   5. 2PC+gRPC checkout completes end-to-end; 2PC+queue checkout completes end-to-end
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 12-01-PLAN.md — Extend transport layer with 2PC RPCs, servicers, client wrappers, queue dispatch, and transport adapter
@@ -145,5 +145,5 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | 2/2 | Complete    | 2026-03-12 | - |
-| 12. 2PC Coordinator & Recovery | v2.0 | 0/2 | Not started | - |
+| 12. 2PC Coordinator & Recovery | 1/2 | In Progress|  | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
