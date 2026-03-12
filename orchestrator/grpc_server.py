@@ -151,8 +151,15 @@ async def run_compensation(db, saga: dict) -> None:
         await db.hset(saga_key, "refund_done", "1")
 
     # Step 2: Release stock (only if stock was reserved and not yet restored)
-    if current.get("stock_reserved") == "1" and current.get("stock_restored") != "1":
-        for item in items:
+    # Use reserved_items_json for partial reservations, or full items list if fully reserved
+    if current.get("stock_restored") != "1":
+        items_to_release = []
+        if current.get("stock_reserved") == "1":
+            items_to_release = items
+        elif current.get("reserved_items_json"):
+            items_to_release = json.loads(current["reserved_items_json"])
+
+        for item in items_to_release:
             item_id = item["item_id"]
             quantity = item["quantity"]
             await retry_forever(
@@ -160,7 +167,8 @@ async def run_compensation(db, saga: dict) -> None:
                     iid, qty, f"{{saga:{order_id}}}:step:release:{iid}"
                 )
             )
-        await db.hset(saga_key, "stock_restored", "1")
+        if items_to_release:
+            await db.hset(saga_key, "stock_restored", "1")
 
     # Finalize: transition to FAILED
     await transition_state(db, saga_key, "COMPENSATING", "FAILED")
@@ -214,9 +222,32 @@ async def run_checkout(
         if state == "COMPLETED":
             return {"success": True, "error_message": ""}
         if state == "FAILED":
-            return {"success": False, "error_message": existing.get("error_message", "")}
-        # Any other state (STARTED, STOCK_RESERVED, PAYMENT_CHARGED, COMPENSATING)
-        return {"success": False, "error_message": "checkout already in progress"}
+            # Terminal state: compensation completed. Allow retry by deleting stale
+            # saga record AND per-step idempotency keys (reserve/release/charge/refund)
+            # so the retry gets fresh results from stock/payment services.
+            saga_key_to_del = f"{{saga:{order_id}}}"
+            await db.delete(saga_key_to_del)
+            # Clean up idempotency keys that reference this saga in stock/payment services.
+            # These use pattern: {item:<id>}:idempotency:{saga:<order_id>}:step:*
+            # We can't scan remote services, but we CAN use the same shared Redis cluster.
+            old_items = json.loads(existing.get("items_json", "[]"))
+            for old_item in old_items:
+                old_iid = old_item["item_id"]
+                # Reserve and release idempotency keys
+                await db.delete(
+                    f"{{item:{old_iid}}}:idempotency:{{saga:{order_id}}}:step:reserve:{old_iid}",
+                    f"{{item:{old_iid}}}:idempotency:{{saga:{order_id}}}:step:release:{old_iid}",
+                )
+            old_uid = existing.get("user_id", "")
+            if old_uid:
+                # Charge and refund idempotency keys
+                await db.delete(
+                    f"{{user:{old_uid}}}:idempotency:{{saga:{order_id}}}:step:charge",
+                    f"{{user:{old_uid}}}:idempotency:{{saga:{order_id}}}:step:refund",
+                )
+        else:
+            # Any other state (STARTED, STOCK_RESERVED, PAYMENT_CHARGED, COMPENSATING)
+            return {"success": False, "error_message": "checkout already in progress"}
 
     # --- Create SAGA record ---
     created = await create_saga_record(db, order_id, user_id, items, total_cost)
@@ -238,6 +269,7 @@ async def run_checkout(
     # --- Forward execution (bounded retry; CircuitBreakerError triggers compensation) ---
     try:
         # Step 1: Reserve stock for each item
+        reserved_items = []
         for item in items:
             item_id = item["item_id"]
             quantity = item["quantity"]
@@ -249,6 +281,9 @@ async def run_checkout(
             if not result.get("success"):
                 error_msg = result.get("error_message", "stock reservation failed")
                 await set_saga_error(db, order_id, error_msg)
+                # Persist which items were already reserved so compensation can release them
+                if reserved_items:
+                    await db.hset(saga_key, "reserved_items_json", json.dumps(reserved_items))
                 await transition_state(db, saga_key, "STARTED", "COMPENSATING")
                 await publish_event(db, "stock_failed", f"{{saga:{order_id}}}", order_id, user_id,
                                     failed_step="reserve_stock", error_type="stock_reservation_failed",
@@ -259,6 +294,7 @@ async def run_checkout(
                 saga = await get_saga(db, order_id)
                 await run_compensation(db, saga)
                 return {"success": False, "error_message": error_msg}
+            reserved_items.append({"item_id": item_id, "quantity": quantity})
 
         # All stock reservations succeeded
         await transition_state(db, saga_key, "STARTED", "STOCK_RESERVED", "stock_reserved", "1")
@@ -340,8 +376,10 @@ async def run_2pc_checkout(
         if state == "COMMITTED":
             return {"success": True, "error_message": ""}
         if state == "ABORTED":
-            return {"success": False, "error_message": existing.get("error_message", "aborted")}
-        return {"success": False, "error_message": "checkout already in progress"}
+            # Terminal state: all participants aborted. Allow retry by deleting stale record.
+            await db.delete(f"{{tpc:{order_id}}}")
+        else:
+            return {"success": False, "error_message": "checkout already in progress"}
 
     # --- Create TPC record ---
     created = await create_tpc_record(db, order_id, user_id, items, total_cost)
@@ -353,8 +391,13 @@ async def run_2pc_checkout(
         if state == "COMMITTED":
             return {"success": True, "error_message": ""}
         if state == "ABORTED":
-            return {"success": False, "error_message": existing.get("error_message", "aborted")}
-        return {"success": False, "error_message": "checkout already in progress"}
+            # Allow retry from aborted
+            await db.delete(f"{{tpc:{order_id}}}")
+            created = await create_tpc_record(db, order_id, user_id, items, total_cost)
+            if not created:
+                return {"success": False, "error_message": "checkout already in progress"}
+        else:
+            return {"success": False, "error_message": "checkout already in progress"}
 
     # --- Phase 1: INIT -> PREPARING ---
     await transition_tpc_state(db, tpc_key, "INIT", "PREPARING")
