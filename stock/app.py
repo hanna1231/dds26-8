@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import uuid
@@ -13,15 +14,17 @@ from operations import StockValue
 
 
 DB_ERROR_STR = "DB error"
+COMM_MODE = os.environ.get("COMM_MODE", "grpc")
 
 app = Quart("stock-service")
 
 db = None
+_stop_event = None
 
 
 @app.before_serving
 async def startup():
-    global db
+    global db, _stop_event
     node_host = os.environ['REDIS_NODE_HOST']
     node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
     db = RedisCluster(
@@ -33,9 +36,17 @@ async def startup():
     await db.initialize()
     app.add_background_task(serve_grpc, db)
 
+    if COMM_MODE == "queue":
+        from queue_consumer import setup_command_consumer_group, queue_consumer
+        _stop_event = asyncio.Event()
+        await setup_command_consumer_group(db)
+        app.add_background_task(queue_consumer, db, db, _stop_event)
+
 
 @app.after_serving
 async def shutdown():
+    if _stop_event:
+        _stop_event.set()
     await stop_grpc_server()
     await db.aclose()
 
