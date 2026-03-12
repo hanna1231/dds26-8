@@ -38,6 +38,7 @@ services:
     environment:
       - REDIS_NODE_HOST=${STOCK_REDIS_HOST:-stock-redis-0}
       - REDIS_PASSWORD=redis
+      - COMM_MODE=${COMM_MODE:-grpc}
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
 
   payment-service:
@@ -47,6 +48,7 @@ services:
     environment:
       - REDIS_NODE_HOST=${PAYMENT_REDIS_HOST:-payment-redis-0}
       - REDIS_PASSWORD=redis
+      - COMM_MODE=${COMM_MODE:-grpc}
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
 
   orchestrator-service:
@@ -59,6 +61,8 @@ services:
       - REDIS_NODE_HOST=${ORCH_REDIS_HOST:-payment-redis-0}
       - REDIS_PASSWORD=redis
       - SAGA_STALENESS_SECONDS=${SAGA_STALENESS_SECONDS:-300}
+      - COMM_MODE=${COMM_MODE:-grpc}
+      - TRANSACTION_PATTERN=${TRANSACTION_PATTERN:-saga}
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     depends_on:
       - stock-service
