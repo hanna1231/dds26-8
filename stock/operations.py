@@ -93,21 +93,10 @@ async def reserve_stock(db, item_id: str, quantity: int, idempotency_key: str) -
         item_entry: StockValue = msgpack.decode(entry, type=StockValue)
         new_stock = item_entry.stock - quantity
         if new_stock < 0:
-            # Not enough stock -- set idempotency result and return failure.
-            # Use SETNX so we don't overwrite a concurrent call's result.
-            fail = json.dumps({"success": False, "error_message": "insufficient stock"})
-            await db.set(ikey, fail, ex=86400, nx=True)
-            # Check if ikey was already set (idempotency replay)
-            cached_bytes = await db.get(ikey)
-            if cached_bytes:
-                cached_str = cached_bytes.decode() if isinstance(cached_bytes, bytes) else cached_bytes
-                if cached_str not in ("__PROCESSING__",):
-                    try:
-                        cached = json.loads(cached_str)
-                        return {"success": cached["success"],
-                                "error_message": cached["error_message"]}
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+            # Not enough stock -- do NOT cache this in idempotency layer because
+            # stock could be replenished and the same saga retried after compensation.
+            # Clean up any __PROCESSING__ sentinel we may have set.
+            await db.delete(ikey)
             return {"success": False, "error_message": "insufficient stock"}
 
         # Compute new serialized value

@@ -85,20 +85,10 @@ async def charge_payment(db, user_id: str, amount: int, idempotency_key: str) ->
         user_entry: UserValue = msgpack.decode(entry, type=UserValue)
         new_credit = user_entry.credit - amount
         if new_credit < 0:
-            # Use SETNX to avoid overwriting a concurrent call's cached result
-            fail = json.dumps({"success": False, "error_message": "insufficient credit"})
-            await db.set(ikey, fail, ex=86400, nx=True)
-            # Read back to get whatever result was stored
-            cached_bytes = await db.get(ikey)
-            if cached_bytes:
-                cached_str = cached_bytes.decode() if isinstance(cached_bytes, bytes) else cached_bytes
-                if cached_str not in ("__PROCESSING__",):
-                    try:
-                        cached = json.loads(cached_str)
-                        return {"success": cached["success"],
-                                "error_message": cached["error_message"]}
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+            # Not enough credit -- do NOT cache this in idempotency layer because
+            # credit could be replenished and the same saga retried after compensation.
+            # Clean up any stale idempotency sentinel.
+            await db.delete(ikey)
             return {"success": False, "error_message": "insufficient credit"}
 
         new_entry = msgpack.encode(UserValue(credit=new_credit))
