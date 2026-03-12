@@ -41,14 +41,26 @@ Checkout transactions must never lose money or item counts — consistency is no
 
 ### Active
 
-_No active requirements — start `/gsd:new-milestone` to define v2.0 scope._
+- [ ] 2PC as alternative transaction coordination pattern (env var toggle alongside SAGA)
+- [ ] Orchestrator as 2PC coordinator (prepare/commit/abort phases)
+- [ ] Redis Streams message queues as default inter-service communication
+- [ ] gRPC kept as fallback communication path (env var toggle)
+
+## Current Milestone: v2.0 2PC & Message Queues
+
+**Goal:** Add Two-Phase Commit as an alternative transaction pattern and migrate inter-service communication to Redis Streams message queues, with env var toggles for both SAGA/2PC and queue/gRPC paths.
+
+**Target features:**
+- 2PC transaction coordination via orchestrator, switchable with SAGA
+- Redis Streams-based request/reply inter-service messaging (replacing gRPC as default)
+- Environment variable configuration for transaction pattern and communication mode
 
 ### Out of Scope
 
 - Phase 2 SAGA Orchestrator abstraction as separate artifact — deferred to April 1 deadline
 - Authentication/authorization — not required by project spec
 - Custom benchmark creation — bonus points only
-- Two-Phase Commit (2PC) — Redis doesn't support XA transactions
+- Two-Phase Commit (2PC) — ~~Redis doesn't support XA transactions~~ Now required; implementing as alternative to SAGA (v2.0)
 - Full event sourcing — significant complexity for zero grade benefit
 - Distributed locking (Redlock) — idempotency + optimistic concurrency is correct approach
 
@@ -90,4 +102,4 @@ _No active requirements — start `/gsd:new-milestone` to define v2.0 scope._
 | Custom redis:7.2 image | bitnami/redis-cluster:8.0 unavailable | ⚠️ Revisit — works but adds maintenance burden |
 
 ---
-*Last updated: 2026-03-11 after v1.0 milestone*
+*Last updated: 2026-03-12 after v2.0 milestone start*
