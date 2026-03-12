@@ -9,7 +9,7 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 
 ### Business Logic Extraction
 
-- [ ] **BLE-01**: Stock service business logic extracted from gRPC servicers into shared operations module
+- [x] **BLE-01**: Stock service business logic extracted from gRPC servicers into shared operations module
 - [x] **BLE-02**: Payment service business logic extracted from gRPC servicers into shared operations module
 
 ### Two-Phase Commit
@@ -64,7 +64,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BLE-01 | Phase 8 | Pending |
+| BLE-01 | Phase 8 | Complete |
 | BLE-02 | Phase 8 | Complete |
 | TPC-01 | Phase 11 | Pending |
 | TPC-02 | Phase 11 | Pending |
