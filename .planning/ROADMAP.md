@@ -143,7 +143,7 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 7. Validation and Delivery | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
-| 10. Transport Adapter | 1/1 | Complete   | 2026-03-12 | - |
+| 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | v2.0 | 0/? | Not started | - |
 | 12. 2PC Coordinator & Recovery | v2.0 | 0/? | Not started | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
