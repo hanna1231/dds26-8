@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import asyncio
+import os
 import subprocess
 import sys
 import time
@@ -234,8 +235,16 @@ def main():
         # Clean state between tests by restarting
         if len(services) > 1:
             print(f"\n--- Restarting cluster for fresh state before testing {svc} ---")
+            comm_mode = os.environ.get("COMM_MODE", "grpc")
+            txn_pattern = os.environ.get("TRANSACTION_PATTERN", "saga")
             run("docker compose down -v", check=False)
-            run("SAGA_STALENESS_SECONDS=10 docker compose --profile simple up -d", check=False)
+            run(
+                f"SAGA_STALENESS_SECONDS=10 COMM_MODE={comm_mode} TRANSACTION_PATTERN={txn_pattern} "
+                f"ORDER_REDIS_HOST=shared-redis-0 STOCK_REDIS_HOST=shared-redis-0 "
+                f"PAYMENT_REDIS_HOST=shared-redis-0 ORCH_REDIS_HOST=shared-redis-0 "
+                f"docker compose --profile simple up -d",
+                check=False,
+            )
             time.sleep(20)  # wait for cluster init
 
         results[svc] = run_kill_test(svc)
