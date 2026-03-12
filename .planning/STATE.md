@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: 2PC & Message Queues
+status: completed
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-03-12T07:21:37.125Z"
+last_activity: 2026-03-12 -- Completed 08-02 payment business logic extraction
+progress:
+  total_phases: 6
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 96
+---
+
 # Project State
 
 ## Project Reference
@@ -10,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 8 of 13 (Business Logic Extraction)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-03-12 -- Roadmap created for v2.0
+Plan: 2 of 2 in current phase
+Status: Phase 8 complete
+Last activity: 2026-03-12 -- Completed 08-02 payment business logic extraction
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 96%
 
 ## Performance Metrics
 
@@ -34,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: --
 
 *Updated after each plan completion*
+| Phase 08 P02 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -44,6 +61,8 @@ See PROJECT.md Key Decisions table for full history.
 Recent decisions affecting current work:
 - [Roadmap]: Phases 9-10 (queue) and Phase 11 (2PC) can proceed in parallel after Phase 8
 - [Roadmap]: Business logic extraction is prerequisite for both queue consumers and 2PC participants
+- [08-02]: Return plain dicts from operations functions for transport independence
+- [08-02]: Clear operations module from sys.modules in conftest to avoid cross-service cache collision
 
 ### Pending Todos
 
@@ -55,6 +74,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12
-Stopped at: Roadmap created for v2.0 milestone
+Last session: 2026-03-12T07:21:37.123Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
