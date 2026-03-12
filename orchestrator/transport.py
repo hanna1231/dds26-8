@@ -22,6 +22,12 @@ if COMM_MODE == "queue":
         charge_payment,
         refund_payment,
         check_payment,
+        prepare_stock,
+        commit_stock,
+        abort_stock,
+        prepare_payment,
+        commit_payment,
+        abort_payment,
     )
 else:
     from client import (  # noqa: F401
@@ -31,6 +37,12 @@ else:
         charge_payment,
         refund_payment,
         check_payment,
+        prepare_stock,
+        commit_stock,
+        abort_stock,
+        prepare_payment,
+        commit_payment,
+        abort_payment,
     )
 
 __all__ = [
@@ -41,4 +53,10 @@ __all__ = [
     "charge_payment",
     "refund_payment",
     "check_payment",
+    "prepare_stock",
+    "commit_stock",
+    "abort_stock",
+    "prepare_payment",
+    "commit_payment",
+    "abort_payment",
 ]

@@ -4,9 +4,11 @@ import grpc.aio
 from circuitbreaker import CircuitBreakerError  # re-exported for callers
 
 from circuit import stock_breaker, payment_breaker
-from stock_pb2 import ReserveStockRequest, ReleaseStockRequest, CheckStockRequest
+from stock_pb2 import (ReserveStockRequest, ReleaseStockRequest, CheckStockRequest,
+                       PrepareStockRequest, CommitStockRequest, AbortStockRequest)
 from stock_pb2_grpc import StockServiceStub
-from payment_pb2 import ChargePaymentRequest, RefundPaymentRequest, CheckPaymentRequest
+from payment_pb2 import (ChargePaymentRequest, RefundPaymentRequest, CheckPaymentRequest,
+                         PreparePaymentRequest, CommitPaymentRequest, AbortPaymentRequest)
 from payment_pb2_grpc import PaymentServiceStub
 
 _stock_channel = None
@@ -83,6 +85,33 @@ async def check_stock(item_id: str) -> dict:
     }
 
 
+@stock_breaker
+async def prepare_stock(item_id: str, quantity: int, order_id: str) -> dict:
+    resp = await _stock_stub.PrepareStock(
+        PrepareStockRequest(item_id=item_id, quantity=quantity, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
+
+
+@stock_breaker
+async def commit_stock(item_id: str, order_id: str) -> dict:
+    resp = await _stock_stub.CommitStock(
+        CommitStockRequest(item_id=item_id, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
+
+
+@stock_breaker
+async def abort_stock(item_id: str, order_id: str) -> dict:
+    resp = await _stock_stub.AbortStock(
+        AbortStockRequest(item_id=item_id, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
+
+
 # ---------------------------------------------------------------------------
 # Payment wrappers
 # ---------------------------------------------------------------------------
@@ -116,3 +145,30 @@ async def check_payment(user_id: str) -> dict:
         "error_message": resp.error_message,
         "credit": resp.credit,
     }
+
+
+@payment_breaker
+async def prepare_payment(user_id: str, amount: int, order_id: str) -> dict:
+    resp = await _payment_stub.PreparePayment(
+        PreparePaymentRequest(user_id=user_id, amount=amount, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
+
+
+@payment_breaker
+async def commit_payment(user_id: str, order_id: str) -> dict:
+    resp = await _payment_stub.CommitPayment(
+        CommitPaymentRequest(user_id=user_id, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
+
+
+@payment_breaker
+async def abort_payment(user_id: str, order_id: str) -> dict:
+    resp = await _payment_stub.AbortPayment(
+        AbortPaymentRequest(user_id=user_id, order_id=order_id),
+        timeout=RPC_TIMEOUT,
+    )
+    return {"success": resp.success, "error_message": resp.error_message}
