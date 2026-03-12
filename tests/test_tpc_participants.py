@@ -25,15 +25,17 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _stock_path = os.path.join(_repo_root, "stock")
 _payment_path = os.path.join(_repo_root, "payment")
 
-# Import stock operations
+# Import stock operations (clear cache first to avoid conftest pollution)
+if "operations" in sys.modules:
+    del sys.modules["operations"]
 sys.path.insert(0, _stock_path)
 import operations as stock_ops  # noqa: E402
 sys.path.pop(0)
 
 # Import payment operations (clear operations from cache to avoid cross-service collision)
-sys.path.insert(0, _payment_path)
 if "operations" in sys.modules:
     del sys.modules["operations"]
+sys.path.insert(0, _payment_path)
 import operations as payment_ops  # noqa: E402
 sys.path.pop(0)
 

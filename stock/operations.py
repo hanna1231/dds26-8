@@ -169,6 +169,171 @@ async def release_stock(db, item_id: str, quantity: int, idempotency_key: str) -
     return {"success": True, "error_message": ""}
 
 
+# ---------------------------------------------------------------------------
+# 2PC Participant Lua Scripts (prepare/commit/abort)
+# ---------------------------------------------------------------------------
+
+# PREPARE: Atomically deduct stock + write hold key.
+# KEYS[1] = item key {item:<item_id>}
+# KEYS[2] = hold key {item:<item_id>}:hold:<order_id>
+# ARGV[1] = quantity (string)
+# ARGV[2] = new item bytes (pre-computed with decremented stock)
+# ARGV[3] = expected current raw bytes (CAS comparison)
+#
+# Returns: "OK", "ALREADY_PREPARED", "RETRY"
+PREPARE_STOCK_LUA = """
+local item_key = KEYS[1]
+local hold_key = KEYS[2]
+local quantity = ARGV[1]
+local new_bytes = ARGV[2]
+local expected_raw = ARGV[3]
+
+-- Idempotency: if hold key already exists, this prepare was already done
+if redis.call('EXISTS', hold_key) == 1 then
+    return 'ALREADY_PREPARED'
+end
+
+-- Check item exists
+local raw = redis.call('GET', item_key)
+if not raw then
+    return 'ITEM_NOT_FOUND'
+end
+
+-- CAS: only write if current bytes match expected
+if raw ~= expected_raw then
+    return 'RETRY'
+end
+
+-- Atomic: deduct stock + create hold key with 7-day TTL
+redis.call('SET', item_key, new_bytes)
+redis.call('SET', hold_key, quantity, 'EX', 604800)
+return 'OK'
+"""
+
+# COMMIT: Delete hold key (stock already deducted, just cleanup).
+# KEYS[1] = hold key {item:<item_id>}:hold:<order_id>
+# Returns: "OK" (idempotent -- succeeds even if already deleted)
+COMMIT_STOCK_LUA = """
+redis.call('DEL', KEYS[1])
+return 'OK'
+"""
+
+# ABORT: Read hold quantity, restore stock, delete hold key.
+# KEYS[1] = item key {item:<item_id>}
+# KEYS[2] = hold key {item:<item_id>}:hold:<order_id>
+# ARGV[1] = new item bytes (stock restored)
+# ARGV[2] = expected current raw bytes (CAS comparison)
+#
+# Returns: "OK", "ALREADY_ABORTED", "RETRY"
+ABORT_STOCK_LUA = """
+local item_key = KEYS[1]
+local hold_key = KEYS[2]
+local new_bytes = ARGV[1]
+local expected_raw = ARGV[2]
+
+-- If hold key gone, abort already happened
+if redis.call('EXISTS', hold_key) == 0 then
+    return 'ALREADY_ABORTED'
+end
+
+-- CAS: only write if current bytes match expected
+local raw = redis.call('GET', item_key)
+if not raw then
+    return 'ITEM_NOT_FOUND'
+end
+if raw ~= expected_raw then
+    return 'RETRY'
+end
+
+-- Atomic: restore stock + delete hold key
+redis.call('SET', item_key, new_bytes)
+redis.call('DEL', hold_key)
+return 'OK'
+"""
+
+
+async def prepare_stock(db, item_id: str, quantity: int, order_id: str) -> dict:
+    """2PC PREPARE: Atomically deduct stock and write hold key."""
+    item_key = f"{{item:{item_id}}}"
+    hold_key = f"{{item:{item_id}}}:hold:{order_id}"
+
+    while True:
+        entry: bytes = await db.get(item_key)
+        if entry is None:
+            return {"success": False, "error_message": "item not found"}
+
+        item_entry: StockValue = msgpack.decode(entry, type=StockValue)
+        if item_entry.stock < quantity:
+            return {"success": False, "error_message": "insufficient stock"}
+
+        new_stock = item_entry.stock - quantity
+        new_entry = msgpack.encode(StockValue(stock=new_stock, price=item_entry.price))
+
+        result = await db.eval(
+            PREPARE_STOCK_LUA, 2, item_key, hold_key,
+            str(quantity), new_entry, entry
+        )
+        if isinstance(result, bytes):
+            result = result.decode()
+
+        if result == "OK":
+            return {"success": True, "error_message": ""}
+        if result == "ALREADY_PREPARED":
+            return {"success": True, "error_message": ""}
+        if result == "RETRY":
+            continue
+        return {"success": False, "error_message": result}
+
+
+async def commit_stock(db, item_id: str, order_id: str) -> dict:
+    """2PC COMMIT: Delete hold key (stock already deducted)."""
+    hold_key = f"{{item:{item_id}}}:hold:{order_id}"
+
+    result = await db.eval(COMMIT_STOCK_LUA, 1, hold_key)
+    if isinstance(result, bytes):
+        result = result.decode()
+
+    return {"success": True, "error_message": ""}
+
+
+async def abort_stock(db, item_id: str, order_id: str) -> dict:
+    """2PC ABORT: Restore stock from hold key and delete it."""
+    item_key = f"{{item:{item_id}}}"
+    hold_key = f"{{item:{item_id}}}:hold:{order_id}"
+
+    while True:
+        # Check hold key
+        hold_val = await db.get(hold_key)
+        if hold_val is None:
+            return {"success": True, "error_message": ""}
+
+        hold_quantity = int(hold_val)
+
+        # Read current item bytes
+        entry: bytes = await db.get(item_key)
+        if entry is None:
+            return {"success": False, "error_message": "item not found"}
+
+        item_entry: StockValue = msgpack.decode(entry, type=StockValue)
+        restored_stock = item_entry.stock + hold_quantity
+        new_entry = msgpack.encode(StockValue(stock=restored_stock, price=item_entry.price))
+
+        result = await db.eval(
+            ABORT_STOCK_LUA, 2, item_key, hold_key,
+            new_entry, entry
+        )
+        if isinstance(result, bytes):
+            result = result.decode()
+
+        if result == "OK":
+            return {"success": True, "error_message": ""}
+        if result == "ALREADY_ABORTED":
+            return {"success": True, "error_message": ""}
+        if result == "RETRY":
+            continue
+        return {"success": False, "error_message": result}
+
+
 async def check_stock(db, item_id: str) -> dict:
     entry: bytes = await db.get(f"{{item:{item_id}}}")
     if entry is None:
