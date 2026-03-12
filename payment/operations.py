@@ -154,6 +154,169 @@ async def refund_payment(db, user_id: str, amount: int, idempotency_key: str) ->
     return {"success": True, "error_message": ""}
 
 
+# ---------------------------------------------------------------------------
+# 2PC Participant Lua Scripts (prepare/commit/abort)
+# ---------------------------------------------------------------------------
+
+# PREPARE: Atomically deduct credit + write hold key.
+# KEYS[1] = user key {user:<user_id>}
+# KEYS[2] = hold key {user:<user_id>}:hold:<order_id>
+# ARGV[1] = amount (string)
+# ARGV[2] = new user bytes (pre-computed with decremented credit)
+# ARGV[3] = expected current raw bytes (CAS comparison)
+#
+# Returns: "OK", "ALREADY_PREPARED", "RETRY"
+PREPARE_PAYMENT_LUA = """
+local user_key = KEYS[1]
+local hold_key = KEYS[2]
+local amount = ARGV[1]
+local new_bytes = ARGV[2]
+local expected_raw = ARGV[3]
+
+-- Idempotency: if hold key already exists, this prepare was already done
+if redis.call('EXISTS', hold_key) == 1 then
+    return 'ALREADY_PREPARED'
+end
+
+-- Check user exists
+local raw = redis.call('GET', user_key)
+if not raw then
+    return 'USER_NOT_FOUND'
+end
+
+-- CAS: only write if current bytes match expected
+if raw ~= expected_raw then
+    return 'RETRY'
+end
+
+-- Atomic: deduct credit + create hold key with 7-day TTL
+redis.call('SET', user_key, new_bytes)
+redis.call('SET', hold_key, amount, 'EX', 604800)
+return 'OK'
+"""
+
+# COMMIT: Delete hold key (credit already deducted, just cleanup).
+# KEYS[1] = hold key {user:<user_id>}:hold:<order_id>
+# Returns: "OK" (idempotent)
+COMMIT_PAYMENT_LUA = """
+redis.call('DEL', KEYS[1])
+return 'OK'
+"""
+
+# ABORT: Read hold amount, restore credit, delete hold key.
+# KEYS[1] = user key {user:<user_id>}
+# KEYS[2] = hold key {user:<user_id>}:hold:<order_id>
+# ARGV[1] = new user bytes (credit restored)
+# ARGV[2] = expected current raw bytes (CAS comparison)
+#
+# Returns: "OK", "ALREADY_ABORTED", "RETRY"
+ABORT_PAYMENT_LUA = """
+local user_key = KEYS[1]
+local hold_key = KEYS[2]
+local new_bytes = ARGV[1]
+local expected_raw = ARGV[2]
+
+-- If hold key gone, abort already happened
+if redis.call('EXISTS', hold_key) == 0 then
+    return 'ALREADY_ABORTED'
+end
+
+-- CAS: only write if current bytes match expected
+local raw = redis.call('GET', user_key)
+if not raw then
+    return 'USER_NOT_FOUND'
+end
+if raw ~= expected_raw then
+    return 'RETRY'
+end
+
+-- Atomic: restore credit + delete hold key
+redis.call('SET', user_key, new_bytes)
+redis.call('DEL', hold_key)
+return 'OK'
+"""
+
+
+async def prepare_payment(db, user_id: str, amount: int, order_id: str) -> dict:
+    """2PC PREPARE: Atomically deduct credit and write hold key."""
+    user_key = f"{{user:{user_id}}}"
+    hold_key = f"{{user:{user_id}}}:hold:{order_id}"
+
+    while True:
+        entry: bytes = await db.get(user_key)
+        if entry is None:
+            return {"success": False, "error_message": "user not found"}
+
+        user_entry: UserValue = msgpack.decode(entry, type=UserValue)
+        if user_entry.credit < amount:
+            return {"success": False, "error_message": "insufficient credit"}
+
+        new_credit = user_entry.credit - amount
+        new_entry = msgpack.encode(UserValue(credit=new_credit))
+
+        result = await db.eval(
+            PREPARE_PAYMENT_LUA, 2, user_key, hold_key,
+            str(amount), new_entry, entry
+        )
+        if isinstance(result, bytes):
+            result = result.decode()
+
+        if result == "OK":
+            return {"success": True, "error_message": ""}
+        if result == "ALREADY_PREPARED":
+            return {"success": True, "error_message": ""}
+        if result == "RETRY":
+            continue
+        return {"success": False, "error_message": result}
+
+
+async def commit_payment(db, user_id: str, order_id: str) -> dict:
+    """2PC COMMIT: Delete hold key (credit already deducted)."""
+    hold_key = f"{{user:{user_id}}}:hold:{order_id}"
+
+    result = await db.eval(COMMIT_PAYMENT_LUA, 1, hold_key)
+    if isinstance(result, bytes):
+        result = result.decode()
+
+    return {"success": True, "error_message": ""}
+
+
+async def abort_payment(db, user_id: str, order_id: str) -> dict:
+    """2PC ABORT: Restore credit from hold key and delete it."""
+    user_key = f"{{user:{user_id}}}"
+    hold_key = f"{{user:{user_id}}}:hold:{order_id}"
+
+    while True:
+        hold_val = await db.get(hold_key)
+        if hold_val is None:
+            return {"success": True, "error_message": ""}
+
+        hold_amount = int(hold_val)
+
+        entry: bytes = await db.get(user_key)
+        if entry is None:
+            return {"success": False, "error_message": "user not found"}
+
+        user_entry: UserValue = msgpack.decode(entry, type=UserValue)
+        restored_credit = user_entry.credit + hold_amount
+        new_entry = msgpack.encode(UserValue(credit=restored_credit))
+
+        result = await db.eval(
+            ABORT_PAYMENT_LUA, 2, user_key, hold_key,
+            new_entry, entry
+        )
+        if isinstance(result, bytes):
+            result = result.decode()
+
+        if result == "OK":
+            return {"success": True, "error_message": ""}
+        if result == "ALREADY_ABORTED":
+            return {"success": True, "error_message": ""}
+        if result == "RETRY":
+            continue
+        return {"success": False, "error_message": result}
+
+
 async def check_payment(db, user_id: str) -> dict:
     entry: bytes = await db.get(f"{{user:{user_id}}}")
     if entry is None:
