@@ -62,11 +62,11 @@ Plans:
   2. Stock and Payment queue consumers process commands by calling the same operations module functions as gRPC servicers
   3. SAGA checkout completes successfully over queue transport (manual wiring, no toggle yet)
   4. Consumer groups provide at-least-once delivery with proper ACK after processing
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
+- [ ] 09-01-PLAN.md — Orchestrator queue client and reply listener
+- [ ] 09-02-PLAN.md — Domain service queue consumers and integration tests
 
 ### Phase 10: Transport Adapter
 **Goal**: Orchestrator transparently switches between gRPC and queue communication via a single env var
@@ -142,7 +142,7 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 6. Infrastructure | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 7. Validation and Delivery | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
-| 9. Queue Infrastructure | v2.0 | 0/? | Not started | - |
+| 9. Queue Infrastructure | v2.0 | 0/2 | Not started | - |
 | 10. Transport Adapter | v2.0 | 0/? | Not started | - |
 | 11. 2PC State Machine & Participants | v2.0 | 0/? | Not started | - |
 | 12. 2PC Coordinator & Recovery | v2.0 | 0/? | Not started | - |
