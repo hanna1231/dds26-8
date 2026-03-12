@@ -4,7 +4,7 @@ import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from quart import Quart, jsonify
 from grpc_server import serve_grpc, stop_grpc_server
-from client import init_grpc_clients, close_grpc_clients
+from transport import COMM_MODE
 from recovery import recover_incomplete_sagas
 from consumers import setup_consumer_groups, compensation_consumer, audit_consumer, init_stop_event
 from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
@@ -26,10 +26,19 @@ async def startup():
         require_full_coverage=True,
     )
     await db.initialize()
-    await init_grpc_clients()
+    if COMM_MODE == "queue":
+        from queue_client import init_queue_client
+        from reply_listener import setup_reply_consumer_group, reply_listener
+        init_queue_client(db)
+        await setup_reply_consumer_group(db)
+    else:
+        from client import init_grpc_clients
+        await init_grpc_clients()
     await recover_incomplete_sagas(db)
     await setup_consumer_groups(db)
     _stop_event = init_stop_event()
+    if COMM_MODE == "queue":
+        app.add_background_task(reply_listener, db, _stop_event)
     app.add_background_task(serve_grpc, db)
     app.add_background_task(compensation_consumer, db)
     app.add_background_task(audit_consumer, db)
@@ -40,7 +49,12 @@ async def shutdown():
     if _stop_event:
         _stop_event.set()
     await stop_grpc_server()
-    await close_grpc_clients()
+    if COMM_MODE == "queue":
+        from queue_client import close_queue_client
+        close_queue_client()
+    else:
+        from client import close_grpc_clients
+        await close_grpc_clients()
     await db.aclose()
 
 
