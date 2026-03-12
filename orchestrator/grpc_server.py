@@ -11,6 +11,7 @@ Implements StartCheckout RPC which drives the full SAGA lifecycle:
 import asyncio
 import json
 import logging
+import os
 import random
 
 import grpc
@@ -27,8 +28,15 @@ from saga import (
     get_saga,
     set_saga_error,
 )
-from transport import reserve_stock, release_stock, charge_payment, refund_payment
+from tpc import create_tpc_record, transition_tpc_state, get_tpc
+from transport import (
+    reserve_stock, release_stock, charge_payment, refund_payment,
+    prepare_stock, commit_stock, abort_stock,
+    prepare_payment, commit_payment, abort_payment,
+)
 from events import publish_event
+
+TRANSACTION_PATTERN = os.environ.get("TRANSACTION_PATTERN", "saga")
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +309,108 @@ async def run_checkout(
 
 
 # ---------------------------------------------------------------------------
+# run_2pc_checkout — Two-Phase Commit coordinator (TPC-04, TPC-05)
+# ---------------------------------------------------------------------------
+
+async def run_2pc_checkout(
+    db,
+    order_id: str,
+    user_id: str,
+    items: list[dict],
+    total_cost: int,
+) -> dict:
+    """
+    Execute the 2PC checkout for the given order.
+
+    Phase 1 (PREPARE): Concurrent prepare_stock + prepare_payment via asyncio.gather.
+    WAL: Persist COMMITTING or ABORTING decision BEFORE sending phase-2 messages.
+    Phase 2 (COMMIT/ABORT): Send commit or abort to all participants.
+
+    Exactly-once: If TPC record already exists, return stored result.
+
+    Returns:
+        {"success": bool, "error_message": str}
+    """
+    tpc_key = f"{{tpc:{order_id}}}"
+
+    # --- Exactly-once check ---
+    existing = await get_tpc(db, order_id)
+    if existing is not None:
+        state = existing.get("state", "")
+        if state == "COMMITTED":
+            return {"success": True, "error_message": ""}
+        if state == "ABORTED":
+            return {"success": False, "error_message": existing.get("error_message", "aborted")}
+        return {"success": False, "error_message": "checkout already in progress"}
+
+    # --- Create TPC record ---
+    created = await create_tpc_record(db, order_id, user_id, items, total_cost)
+    if not created:
+        existing = await get_tpc(db, order_id)
+        if existing is None:
+            return {"success": False, "error_message": "internal error: tpc disappeared after creation race"}
+        state = existing.get("state", "")
+        if state == "COMMITTED":
+            return {"success": True, "error_message": ""}
+        if state == "ABORTED":
+            return {"success": False, "error_message": existing.get("error_message", "aborted")}
+        return {"success": False, "error_message": "checkout already in progress"}
+
+    # --- Phase 1: INIT -> PREPARING ---
+    await transition_tpc_state(db, tpc_key, "INIT", "PREPARING")
+
+    # --- Concurrent PREPARE via asyncio.gather ---
+    futures = []
+    for item in items:
+        futures.append(prepare_stock(item["item_id"], item["quantity"], order_id))
+    futures.append(prepare_payment(user_id, total_cost, order_id))
+
+    results = await asyncio.gather(*futures, return_exceptions=True)
+
+    # --- Collect votes ---
+    all_yes = True
+    first_error = ""
+    for r in results:
+        if isinstance(r, Exception):
+            all_yes = False
+            if not first_error:
+                first_error = str(r)
+        elif not r.get("success"):
+            all_yes = False
+            if not first_error:
+                first_error = r.get("error_message", "prepare failed")
+
+    if all_yes:
+        # --- WAL: persist COMMITTING BEFORE sending commits (TPC-05) ---
+        await transition_tpc_state(db, tpc_key, "PREPARING", "COMMITTING")
+
+        # --- Phase 2: Send COMMITs ---
+        commit_futures = []
+        for item in items:
+            commit_futures.append(commit_stock(item["item_id"], order_id))
+        commit_futures.append(commit_payment(user_id, order_id))
+        await asyncio.gather(*commit_futures, return_exceptions=True)
+
+        # --- Finalize ---
+        await transition_tpc_state(db, tpc_key, "COMMITTING", "COMMITTED")
+        return {"success": True, "error_message": ""}
+    else:
+        # --- WAL: persist ABORTING BEFORE sending aborts (TPC-05) ---
+        await transition_tpc_state(db, tpc_key, "PREPARING", "ABORTING")
+
+        # --- Phase 2: Send ABORTs ---
+        abort_futures = []
+        for item in items:
+            abort_futures.append(abort_stock(item["item_id"], order_id))
+        abort_futures.append(abort_payment(user_id, order_id))
+        await asyncio.gather(*abort_futures, return_exceptions=True)
+
+        # --- Finalize ---
+        await transition_tpc_state(db, tpc_key, "ABORTING", "ABORTED")
+        return {"success": False, "error_message": first_error}
+
+
+# ---------------------------------------------------------------------------
 # gRPC servicer
 # ---------------------------------------------------------------------------
 
@@ -310,13 +420,22 @@ class OrchestratorServiceServicer(OrchestratorServiceServicerBase):
 
     async def StartCheckout(self, request, context):
         items = [{"item_id": item.item_id, "quantity": item.quantity} for item in request.items]
-        result = await run_checkout(
-            self.db,
-            order_id=request.order_id,
-            user_id=request.user_id,
-            items=items,
-            total_cost=request.total_cost,
-        )
+        if TRANSACTION_PATTERN == "2pc":
+            result = await run_2pc_checkout(
+                self.db,
+                order_id=request.order_id,
+                user_id=request.user_id,
+                items=items,
+                total_cost=request.total_cost,
+            )
+        else:
+            result = await run_checkout(
+                self.db,
+                order_id=request.order_id,
+                user_id=request.user_id,
+                items=items,
+                total_cost=request.total_cost,
+            )
         return CheckoutResponse(
             success=result["success"],
             error_message=result["error_message"],
