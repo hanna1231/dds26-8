@@ -33,7 +33,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [ ] **Phase 8: Business Logic Extraction** - Extract Stock and Payment business logic from gRPC servicers into shared operations modules
 - [x] **Phase 9: Queue Infrastructure** - Build Redis Streams request/reply messaging with consumer groups and correlation ID routing (completed 2026-03-12)
 - [x] **Phase 10: Transport Adapter** - Create transport abstraction enabling transparent gRPC/queue swap with COMM_MODE toggle (completed 2026-03-12)
-- [ ] **Phase 11: 2PC State Machine & Participants** - Build 2PC state machine and tentative reservation Lua scripts for Stock and Payment
+- [x] **Phase 11: 2PC State Machine & Participants** - Build 2PC state machine and tentative reservation Lua scripts for Stock and Payment (completed 2026-03-12)
 - [ ] **Phase 12: 2PC Coordinator & Recovery** - Implement 2PC coordinator flow, WAL pattern, recovery scanner, and TRANSACTION_PATTERN toggle
 - [ ] **Phase 13: Integration & Benchmark** - Validate all 4 mode combinations with integration tests, kill-tests, and benchmark
 
@@ -90,7 +90,7 @@ Plans:
   2. Stock PREPARE atomically reserves all items in an order; COMMIT finalizes; ABORT releases -- partial prepare is impossible
   3. Payment PREPARE atomically reserves funds; COMMIT finalizes; ABORT releases
   4. All 2PC Lua scripts preserve idempotency (duplicate PREPARE/COMMIT/ABORT calls are safe)
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 11-01-PLAN.md — 2PC state machine (tpc.py) with Lua CAS transitions and tests
@@ -144,6 +144,6 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
-| 11. 2PC State Machine & Participants | v2.0 | 0/2 | Not started | - |
+| 11. 2PC State Machine & Participants | 2/2 | Complete   | 2026-03-12 | - |
 | 12. 2PC Coordinator & Recovery | v2.0 | 0/? | Not started | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
