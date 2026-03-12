@@ -1,441 +1,689 @@
-# Architecture Research: SAGA-Based Distributed Checkout System
+# Architecture Patterns
 
-**Research Date:** 2026-02-27
-**Research Type:** Project Research — Architecture dimension
-**Milestone:** Subsequent milestone — SAGA orchestrator, gRPC, message queue, Redis Cluster, Kubernetes scaling
-**Question:** How should a SAGA-based distributed checkout system be structured?
-
----
-
-## Summary
-
-The target architecture extends the existing three-service checkout system (Order, Stock, Payment) with a dedicated SAGA orchestrator service that owns all distributed transaction logic. External clients communicate via HTTP through Nginx. Internal service-to-service communication uses gRPC. The message queue (Redis Streams) carries events between the orchestrator and domain services for async coordination. Each service stores its domain data in Redis Cluster. Kubernetes HPA scales the stateless services under load.
-
-The SAGA orchestrator is the architectural centerpiece. It replaces the ad-hoc rollback logic currently embedded in the Order service and makes distributed transactions recoverable, observable, and correct under partial failure.
+**Domain:** 2PC and Redis Streams request/reply messaging for distributed checkout system
+**Researched:** 2026-03-12
+**Context:** v2.0 milestone -- adding 2PC as alternative transaction pattern and Redis Streams message queues as default inter-service communication to existing SAGA+gRPC system
 
 ---
 
-## Component Boundaries
+## Current Architecture (v1.0 Baseline)
 
-### External API Layer (Nginx Gateway)
+```
+Client -> Nginx -> Order Service --(gRPC)--> Orchestrator --(gRPC)--> Stock Service
+                                                          --(gRPC)--> Payment Service
 
-- Accepts all HTTP requests from clients and the benchmark
-- Routes by URL prefix: `/orders/*` to Order service, `/stock/*` to Stock service, `/payment/*` to Payment service
-- The external API contract (routes, request/response shapes) is frozen — cannot change
-- Does not communicate with the SAGA orchestrator directly
-- Remains unchanged in scope; only the backends it points to are upgraded
+Orchestrator --(Redis Streams)--> {saga:events}:checkout  (fire-and-forget audit/compensation events)
+All services --(Redis Cluster)--> per-domain Redis (data storage + SAGA state)
+```
 
-### Order Service
+**Key properties of v1.0 that constrain v2.0 design:**
 
-- Owns order data: create, find, addItem
-- On `POST /orders/checkout/{order_id}`: reads the order, then delegates to the SAGA orchestrator via gRPC to start a checkout saga
-- Returns success/failure to the caller after the orchestrator resolves the saga
-- Does not contain rollback logic — that responsibility moves to the orchestrator
-- Stores OrderValue structs in its own Redis Cluster shard
-- Scales horizontally; stateless per request
-
-### Stock Service
-
-- Owns inventory data: item create, find, add, subtract
-- Exposes gRPC endpoints for: subtract stock (with idempotency key), add stock (compensation), find item price
-- Still exposes HTTP for the external API routes the gateway hits directly
-- Does not initiate or coordinate transactions — it only responds to instructions
-- Stores StockValue structs in its own Redis Cluster shard
-- Scales horizontally; stateless per request
-
-### Payment Service
-
-- Owns user credit data: create user, find user, add funds, pay
-- Exposes gRPC endpoints for: charge user (with idempotency key), refund user (compensation), find user balance
-- Still exposes HTTP for the external API routes the gateway hits directly
-- Does not initiate or coordinate transactions
-- Stores UserValue structs in its own Redis Cluster shard
-- Scales horizontally; stateless per request
-
-### SAGA Orchestrator Service
-
-- New service. Central coordinator for all checkout transactions.
-- Receives `StartCheckout(order_id, user_id, items, total_cost)` via gRPC from the Order service
-- Runs the SAGA state machine: sequences steps, handles failures, triggers compensations
-- Persists saga state to its own Redis instance after every state transition (durable log)
-- On startup, scans for in-progress sagas and resumes them (crash recovery)
-- Publishes events to the message queue for async notification (saga started, saga completed, saga failed)
-- Does NOT expose external HTTP routes — internal only
-- Is the only service allowed to call Stock and Payment gRPC endpoints for transactional operations
-- Single replica in steady state (state machine correctness); can run multiple replicas with saga ID-based partitioning if needed
-
-### Message Queue (Redis Streams)
-
-- Event bus for async coordination and observability
-- The orchestrator publishes saga lifecycle events; domain services and external consumers can subscribe
-- Also used as the durable inbox for compensating transaction retries if a downstream service is temporarily unavailable
-- Topology described below
-
-### Redis Cluster
-
-- Three separate Redis Cluster deployments (one per domain service: order-db, stock-db, payment-db)
-- The orchestrator uses a fourth Redis instance for saga state storage (single-node or small cluster)
-- Provides high availability via replica sets and automatic failover
-- Data sharding handled by Redis Cluster slot assignment
-
-### Kubernetes (Scaling Layer)
-
-- All services run as Kubernetes Deployments
-- HPA scales Order, Stock, and Payment services based on CPU/request load
-- The orchestrator runs as a single replica or with leader election if multiple replicas needed
-- Redis Cluster is deployed via Helm (Bitnami Redis Cluster chart)
-- Nginx Ingress replaces the docker-compose Nginx gateway
+| Property | Detail | Implication for v2.0 |
+|----------|--------|---------------------|
+| Order->Orchestrator is gRPC `StartCheckout` | Synchronous request/response | This entry point does NOT change -- only internal orchestrator logic changes |
+| SAGA state in Redis hash `{saga:<order_id>}` | Lua CAS transitions | 2PC needs analogous `{2pc:<order_id>}` hash with its own state machine |
+| Idempotency keys on all mutation RPCs | Stored in Redis with TTL | 2PC reuses same idempotency mechanism |
+| `client.py` wraps gRPC stubs with circuit breakers | `reserve_stock()`, `charge_payment()`, etc. | Queue client must expose identical function signatures |
+| Redis Streams used ONLY for fire-and-forget events | NOT for inter-service commands | v2.0 adds a second, separate stream topology for request/reply commands |
+| Compensation retries with `retry_forever` | Exponential backoff, never gives up | 2PC commit/abort retries use identical pattern |
+| Recovery scanner on startup | Scans for stale non-terminal SAGAs | 2PC needs its own recovery scanner for stale non-terminal 2PC records |
+| Orchestrator single replica | Avoids split-brain | Same constraint applies to 2PC coordinator and queue reply consumer |
 
 ---
 
-## Data Flow: Checkout Transaction Through SAGA Orchestrator
+## Recommended Architecture for v2.0
+
+### Two Orthogonal Configuration Axes
+
+1. **Transaction pattern** -- `TRANSACTION_PATTERN=saga|2pc` (env var)
+2. **Communication mode** -- `COMM_MODE=grpc|queue` (env var)
+
+These are ORTHOGONAL. Four valid combinations exist:
+
+| Combination | Status |
+|------------|--------|
+| `saga + grpc` | Current v1.0 (unchanged) |
+| `saga + queue` | NEW: SAGA over message queues |
+| `2pc + grpc` | NEW: 2PC over gRPC |
+| `2pc + queue` | NEW: 2PC over message queues |
+
+### Component Boundaries
+
+| Component | Responsibility | What Changes in v2.0 |
+|-----------|---------------|---------------------|
+| **Order Service** | Order CRUD, checkout entry point | NO CHANGE -- calls orchestrator gRPC `StartCheckout`; orchestrator's internal pattern is transparent |
+| **Orchestrator** | Transaction coordination (SAGA or 2PC) | NEW: 2PC coordinator, queue client adapter, env var routing, reply consumer |
+| **Stock Service** | Stock CRUD, reserve/release operations | NEW: queue consumer loop (when COMM_MODE=queue), 2PC participant operations (prepare/commit/abort) |
+| **Payment Service** | Payment CRUD, charge/refund operations | NEW: queue consumer loop (when COMM_MODE=queue), 2PC participant operations (prepare/commit/abort) |
+| **Queue Layer** (new logical component) | Request/reply over Redis Streams | NEW: shared protocol for request routing and correlation |
+
+### High-Level v2.0 Diagram
 
 ```
-Client
-  |
-  | POST /orders/checkout/{order_id}  [HTTP]
-  v
-Nginx Gateway
-  |
-  | routes to Order Service  [HTTP internal]
-  v
-Order Service
-  |
-  | 1. Read order from order-db (Redis Cluster)
-  | 2. gRPC: StartCheckout(saga_id, order_id, user_id, items, total_cost)
-  v
-SAGA Orchestrator
-  |
-  | 3. Persist saga state: STARTED  --> orchestrator-db (Redis)
-  | 4. Publish event: saga.started  --> Redis Streams
-  |
-  | Step 1: Reserve Stock
-  | 5. gRPC: SubtractStock(item_id, qty, idempotency_key=saga_id+step)
-  v
-Stock Service
-  |  [executes subtract, persists to stock-db]
-  |
-  v
-SAGA Orchestrator (receives gRPC response)
-  |
-  | 6. Persist saga state: STOCK_RESERVED
-  |
-  | Step 2: Charge Payment
-  | 7. gRPC: ChargeUser(user_id, amount, idempotency_key=saga_id+step)
-  v
-Payment Service
-  |  [executes charge, persists to payment-db]
-  |
-  v
-SAGA Orchestrator (receives gRPC response)
-  |
-  | 8. Persist saga state: PAYMENT_CHARGED
-  | 9. gRPC: MarkOrderPaid(order_id)
-  v
-Order Service
-  |  [sets order.paid = True in order-db]
-  |
-  v
-SAGA Orchestrator
-  |
-  | 10. Persist saga state: COMPLETED
-  | 11. Publish event: saga.completed  --> Redis Streams
-  | 12. Return success to caller via gRPC
-  v
-Order Service
-  |
-  | 13. Return HTTP 200 to Nginx
-  v
-Client  <-- HTTP 200 OK
-```
+                                 ENV: TRANSACTION_PATTERN = saga | 2pc
+                                 ENV: COMM_MODE = queue | grpc
 
-**Failure path (payment fails after stock reserved):**
-
-```
-SAGA Orchestrator (payment gRPC returns error)
-  |
-  | Persist saga state: COMPENSATING
-  |
-  | Compensation Step 1: Restore Stock
-  | gRPC: AddStock(item_id, qty, idempotency_key=saga_id+comp_step)
-  v
-Stock Service  [restores stock in stock-db]
-  |
-  v
-SAGA Orchestrator
-  |
-  | Persist saga state: FAILED
-  | Publish event: saga.failed  --> Redis Streams
-  | Return failure to Order Service via gRPC
-  v
-Order Service --> HTTP 400 to client
+Client -> Nginx -> Order Service --(gRPC StartCheckout)--> Orchestrator
+                                                               |
+                                                       ┌───────┴───────┐
+                                                       |               |
+                                                 SAGA module     2PC module
+                                                       |               |
+                                                       └───────┬───────┘
+                                                               |
+                                                       transport.py
+                                                               |
+                                                       ┌───────┴───────┐
+                                                       |               |
+                                                 client.py       queue_client.py
+                                                 (gRPC stubs)    (Redis Streams
+                                                       |          request/reply)
+                                                       |               |
+                                                       └───────┬───────┘
+                                                               |
+                                                       Stock / Payment
+                                                       (gRPC server OR
+                                                        queue consumer)
 ```
 
 ---
 
-## SAGA State Machine Design
+## New Component 1: 2PC Coordinator
 
-### States
+### 2PC vs SAGA: Fundamental Difference
+
+SAGA executes steps **sequentially** and **compensates** on failure (undo completed work).
+2PC asks all participants to **prepare concurrently**, then makes a single **commit-or-abort decision**.
+
+SAGA is eventually consistent during compensation. 2PC provides atomic commit -- either all participants commit or all abort. In Redis (which has no native XA support), "prepare" actually performs the mutation optimistically, and "abort" undoes it -- structurally similar to SAGA compensation but with a different timing model.
+
+### 2PC State Machine
 
 ```
-STARTED
-  --> STOCK_RESERVED      (stock subtracted successfully)
-  --> FAILED              (stock subtraction failed, no compensation needed)
+                              2PC State Machine
 
-STOCK_RESERVED
-  --> PAYMENT_CHARGED     (payment charged successfully)
-  --> COMPENSATING        (payment failed, begin rollback)
-
-PAYMENT_CHARGED
-  --> ORDER_MARKED_PAID   (order.paid set to True)
-  --> COMPENSATING        (order update failed — rare, treat as partial failure)
-
-ORDER_MARKED_PAID
-  --> COMPLETED
-
-COMPENSATING
-  --> STOCK_RESTORED      (stock add succeeded)
-  --> COMPENSATION_FAILED (stock add failed after retries)
-
-STOCK_RESTORED
-  --> FAILED
-
-FAILED                    (terminal — transaction did not complete)
-COMPLETED                 (terminal — transaction committed)
-COMPENSATION_FAILED       (terminal — requires operator intervention / manual reconciliation)
+     ┌──────────┐  all vote YES  ┌────────────┐  all ack   ┌───────────┐
+     │ PREPARING │──────────────>│ COMMITTING │───────────>│ COMMITTED │
+     └──────────┘               └────────────┘            └───────────┘
+          │
+          │ any vote NO or timeout
+          ▼
+     ┌──────────┐  all ack   ┌──────────┐
+     │ ABORTING │───────────>│ ABORTED  │
+     └──────────┘            └──────────┘
 ```
 
-### Steps and Compensations
+**Valid transitions (for Lua CAS):**
 
-| Step | Forward Action | Compensation Action |
-|------|---------------|-------------------|
-| 1    | SubtractStock(item_id, qty, idempotency_key) | AddStock(item_id, qty, idempotency_key) |
-| 2    | ChargeUser(user_id, amount, idempotency_key) | RefundUser(user_id, amount, idempotency_key) |
-| 3    | MarkOrderPaid(order_id) | MarkOrderUnpaid(order_id) — rarely needed |
-
-Compensations run in reverse order of forward steps (compensation for step N before compensation for step N-1).
-
-### Idempotency Keys
-
-Every gRPC call from the orchestrator to a domain service carries an idempotency key constructed as `{saga_id}:{step_name}:{direction}`. Domain services must deduplicate on this key using a Redis SET NX pattern before applying mutations. This ensures retries after network failures do not double-charge or double-subtract.
-
-### Timeouts
-
-- Per-step timeout: 5 seconds. If a gRPC call to a domain service does not respond within 5 seconds, the orchestrator treats it as a failure and triggers compensation.
-- Saga-level timeout: 30 seconds. If a saga has not reached a terminal state within 30 seconds of creation, a background sweep marks it COMPENSATING and begins rollback.
-- Compensation retry: Exponential backoff starting at 1 second, max 5 retries before entering COMPENSATION_FAILED state.
-
-### Crash Recovery
-
-On orchestrator startup:
-1. Scan orchestrator-db for all sagas not in terminal state (COMPLETED, FAILED, COMPENSATION_FAILED)
-2. For each: resume from the current state using idempotent gRPC calls (safe to replay because of idempotency keys)
-3. Sagas in COMPENSATING state: resume compensation from the last completed compensation step
-
----
-
-## gRPC Layer Design
-
-### How gRPC Fits Alongside HTTP
-
-- External API: HTTP only, via Nginx. Client-facing routes are unchanged.
-- Internal API: gRPC only, for service-to-service calls initiated by the orchestrator and by the Order service when starting a saga.
-- Each domain service runs two servers on different ports: HTTP on port 5000 (existing, for gateway routing) and gRPC on port 50051 (new, for internal calls).
-- The orchestrator runs only a gRPC server (no HTTP).
-
-### Proto Definitions (conceptual)
-
-```proto
-// saga_orchestrator.proto
-service SagaOrchestrator {
-  rpc StartCheckout(CheckoutRequest) returns (CheckoutResponse);
-}
-
-// stock_service.proto
-service StockService {
-  rpc SubtractStock(StockMutationRequest) returns (StockMutationResponse);
-  rpc AddStock(StockMutationRequest) returns (StockMutationResponse);
-  rpc FindItem(FindItemRequest) returns (FindItemResponse);
-}
-
-// payment_service.proto
-service PaymentService {
-  rpc ChargeUser(PaymentRequest) returns (PaymentResponse);
-  rpc RefundUser(PaymentRequest) returns (PaymentResponse);
-  rpc FindUser(FindUserRequest) returns (FindUserResponse);
-}
-
-// order_service.proto
-service OrderService {
-  rpc MarkOrderPaid(MarkOrderPaidRequest) returns (MarkOrderPaidResponse);
+```python
+TPC_VALID_TRANSITIONS = {
+    "PREPARING":  {"COMMITTING", "ABORTING"},
+    "COMMITTING": {"COMMITTED"},
+    "ABORTING":   {"ABORTED"},
 }
 ```
 
-### Python gRPC Libraries
+### 2PC Redis State Record
 
-- `grpcio` + `grpcio-tools` for stub generation
-- Async gRPC via `grpcio` with `asyncio` (compatible with Quart+Uvicorn async model)
-- One gRPC channel per downstream service, reused across requests (connection pooling built into gRPC)
+```
+Redis Hash: {2pc:<order_id>}
+Fields:
+  state:            PREPARING | COMMITTING | COMMITTED | ABORTING | ABORTED
+  order_id:         string
+  user_id:          string
+  total_cost:       string (int)
+  items_json:       string (JSON array)
+  stock_vote:       pending | yes | no
+  payment_vote:     pending | yes | no
+  decision:         none | commit | abort
+  error_message:    string
+  started_at:       unix timestamp
+  updated_at:       unix timestamp
+```
+
+### 2PC Execution Flow
+
+```
+1. Create 2PC record (PREPARING state, both votes "pending")
+2. Send Prepare to Stock + Payment CONCURRENTLY (asyncio.gather)
+3. Collect votes:
+   - Both YES  -> set decision="commit", transition PREPARING -> COMMITTING
+   - Any NO    -> set decision="abort",  transition PREPARING -> ABORTING
+   - Timeout   -> set decision="abort",  transition PREPARING -> ABORTING
+4a. COMMITTING: Send Commit to both (retry-forever), then -> COMMITTED
+4b. ABORTING:   Send Abort to both (retry-forever), then -> ABORTED
+5. Return success (COMMITTED) or failure (ABORTED) to caller
+```
+
+### 2PC vs SAGA: Implementation Mapping
+
+| SAGA Concept | 2PC Equivalent | Code Reuse |
+|-------------|----------------|------------|
+| `saga.py` (create_saga_record, transition_state, get_saga) | `tpc.py` (create_2pc_record, transition_state, get_2pc) | Reuse TRANSITION_LUA verbatim; different state constants |
+| `run_checkout` in grpc_server.py | `run_checkout_2pc` in tpc_coordinator.py | Different flow but same retry patterns |
+| Sequential: reserve stock THEN charge payment | Concurrent: prepare stock AND payment via asyncio.gather | Structural change |
+| `run_compensation` (retry-forever reverse order) | `run_commit` or `run_abort` (retry-forever to all) | Same retry_forever function |
+| `recovery.py` (resume stale SAGAs) | `tpc_recovery.py` (resume stale 2PCs) | Same scan pattern, different state machine |
+| Idempotency keys `{saga:<oid>}:step:reserve:<iid>` | Idempotency keys `{2pc:<oid>}:step:prepare_stock` | Same mechanism, different prefix |
+
+### 2PC Participant Operations
+
+**Critical insight:** Redis has no native prepare/commit split. In this system, "prepare" performs the actual mutation (same as current ReserveStock/ChargePayment). "Commit" is an acknowledgment (no-op on data). "Abort" undoes the mutation (same as current ReleaseStock/RefundPayment).
+
+**Stock Service needs:**
+- `PrepareReserve(tx_id, items[])` -- reserve ALL items atomically, vote YES/NO
+- `CommitReserve(tx_id)` -- acknowledge commit (data already mutated in prepare)
+- `AbortReserve(tx_id)` -- release all reserved stock (equivalent to ReleaseStock per item)
+
+**Payment Service needs:**
+- `PrepareCharge(tx_id, user_id, amount)` -- deduct credit, vote YES/NO
+- `CommitCharge(tx_id)` -- acknowledge commit (data already mutated in prepare)
+- `AbortCharge(tx_id)` -- refund credit (equivalent to RefundPayment)
+
+**Key design decision: 2PC prepares ALL items in one call.** Unlike SAGA which reserves item-by-item, 2PC's prepare must be atomic across all items -- either all can be reserved or none. This requires a new multi-item Lua script for Stock.
+
+### Proto Additions
+
+```protobuf
+// stock.proto additions
+rpc PrepareReserve(PrepareReserveRequest) returns (VoteResponse);
+rpc CommitReserve(TxRequest) returns (AckResponse);
+rpc AbortReserve(TxRequest) returns (AckResponse);
+
+message PrepareReserveRequest {
+  string tx_id = 1;
+  repeated ReserveStockRequest items = 2;  // reuse existing message type
+}
+
+message VoteResponse {
+  bool vote_yes = 1;
+  string error_message = 2;
+}
+
+message TxRequest {
+  string tx_id = 1;
+}
+
+message AckResponse {
+  bool acknowledged = 1;
+  string error_message = 2;
+}
+```
+
+```protobuf
+// payment.proto additions
+rpc PrepareCharge(PrepareChargeRequest) returns (VoteResponse);
+rpc CommitCharge(TxRequest) returns (AckResponse);
+rpc AbortCharge(TxRequest) returns (AckResponse);
+
+message PrepareChargeRequest {
+  string tx_id = 1;
+  string user_id = 2;
+  int32 amount = 3;
+}
+```
 
 ---
 
-## Message Queue Topology
+## New Component 2: Redis Streams Request/Reply
 
-### Technology Decision: Redis Streams over Kafka
+### Why a New Stream Topology (Not Reusing Existing)
 
-Redis Streams is the recommended choice for this project because:
-- Redis is already a hard dependency (course requirement); no new infrastructure needed
-- Redis Streams supports consumer groups, message acknowledgment, and replay — all required features
-- Kafka introduces significant operational overhead (Zookeeper/KRaft, broker management) that is not justified for three topics under benchmark load
-- Redis Streams integrates with the same Redis Cluster used for data, simplifying deployment
+The existing Redis Streams (`{saga:events}:checkout`) are fire-and-forget event streams for observability. The new queue system is fundamentally different: it carries commands that require responses. These MUST be separate streams to avoid:
+- Mixing commands with audit events
+- Different delivery guarantees (at-most-once events vs. exactly-once commands)
+- Different consumer group semantics
 
-### Stream Topology
+### Request/Reply Protocol
 
-| Stream Name | Producers | Consumers | Purpose |
-|-------------|-----------|-----------|---------|
-| `saga.events` | SAGA Orchestrator | Monitoring, future consumers | Saga lifecycle events (started, completed, failed) |
-| `saga.compensation.retry` | SAGA Orchestrator | SAGA Orchestrator (retry worker) | Failed compensation steps that need retry |
+**Request streams** (one per target service):
+- `{queue}:stock:requests` -- commands destined for Stock Service
+- `{queue}:payment:requests` -- commands destined for Payment Service
 
-### Consumer Groups
+**Reply stream** (one for orchestrator):
+- `{queue}:orchestrator:replies` -- all replies flow back here
 
-- `saga.events` stream: consumer group `monitoring` for observability consumers
-- `saga.compensation.retry` stream: consumer group `orchestrator-retry` with one consumer per orchestrator replica
-
-### Message Schema
-
-Each message is a Redis Stream entry (field-value pairs). Example saga lifecycle event:
-
+**Request message format** (XADD fields):
 ```
-XADD saga.events * saga_id <uuid> event_type saga.completed order_id <uuid> user_id <uuid> timestamp <unix_ms>
+correlation_id:  UUID (links reply to request)
+command:         "ReserveStock" | "ReleaseStock" | "PrepareReserve" | "CommitReserve" | "AbortReserve" | etc.
+payload:         JSON-encoded request body
+reply_to:        "{queue}:orchestrator:replies"
+timestamp:       unix epoch
 ```
 
-### Delivery Guarantees
+**Reply message format** (XADD fields):
+```
+correlation_id:  UUID (matches request)
+success:         "true" | "false"
+payload:         JSON-encoded response body (for commands that return data)
+error_message:   string
+timestamp:       unix epoch
+```
 
-- At-least-once delivery via consumer group acknowledgment (XACK after processing)
-- Idempotent consumers (saga state transitions are idempotent via state machine guards)
-- Dead letter: after N retries without ACK, message moved to `saga.dlq` stream for inspection
+### Request/Reply Data Flow
+
+```
+Orchestrator                    Redis Streams                    Stock Service
+     |                               |                               |
+     |  1. Register Future for       |                               |
+     |     correlation_id in         |                               |
+     |     pending_requests map      |                               |
+     |                               |                               |
+     |  2. XADD {queue}:stock:      |                               |
+     |     requests {correlation_id, |                               |
+     |     command, payload}         |                               |
+     |------------------------------>|                               |
+     |                               |  3. XREADGROUP (consumer      |
+     |                               |     group: stock-workers)     |
+     |                               |<------------------------------|
+     |                               |                               |
+     |                               |     4. Dispatch to business   |
+     |                               |        logic based on command |
+     |                               |                               |
+     |                               |  5. XADD {queue}:orchestrator:|
+     |                               |     replies {correlation_id,  |
+     |                               |     success, payload}         |
+     |                               |<------------------------------|
+     |                               |                               |
+     |  6. Reply consumer reads      |                               |
+     |     from replies stream,      |                               |
+     |     resolves Future by        |                               |
+     |     correlation_id            |                               |
+     |<------------------------------|                               |
+     |                               |                               |
+     |  7. Caller awaits Future,     |                               |
+     |     gets result               |                               |
+```
+
+### Correlation and Waiting: Future-Based Pattern
+
+The orchestrator must block waiting for a specific reply without busy-polling.
+
+**Chosen approach: asyncio.Future map**
+
+```python
+# Conceptual flow in queue_client.py:
+
+pending_requests: dict[str, asyncio.Future] = {}
+
+async def send_and_wait(target_service, command, payload, timeout=5.0):
+    correlation_id = str(uuid.uuid4())
+    future = asyncio.get_event_loop().create_future()
+    pending_requests[correlation_id] = future
+
+    await db.xadd(f"{{queue}}:{target_service}:requests", {
+        "correlation_id": correlation_id,
+        "command": command,
+        "payload": json.dumps(payload),
+        "reply_to": "{queue}:orchestrator:replies",
+        "timestamp": str(int(time.time())),
+    })
+
+    try:
+        result = await asyncio.wait_for(future, timeout=timeout)
+        return result
+    except asyncio.TimeoutError:
+        pending_requests.pop(correlation_id, None)
+        return {"success": False, "error_message": "queue reply timeout"}
+```
+
+**Background reply consumer** runs as a Quart background task, reads from `{queue}:orchestrator:replies`, resolves Futures by correlation_id.
+
+**Why this over per-request reply streams:** Creating/deleting thousands of streams under load doesn't scale. Redis Cluster key-distribution overhead per stream. A single reply stream with a pending map is clean and efficient.
+
+### Consumer Groups for Load Balancing
+
+| Stream | Consumer Group | Consumers |
+|--------|---------------|-----------|
+| `{queue}:stock:requests` | `stock-workers` | Each Stock replica joins same group |
+| `{queue}:payment:requests` | `payment-workers` | Each Payment replica joins same group |
+| `{queue}:orchestrator:replies` | `orch-replies` | Single orchestrator consumer |
+
+**Advantage over gRPC:** When Stock scales to N replicas via HPA, each replica joins the `stock-workers` consumer group. Redis automatically load-balances requests across replicas. With gRPC, load balancing requires client-side logic or a service mesh.
+
+### Stream Key Hash Tags
+
+All queue streams share the `{queue}` hash tag:
+- `{queue}:stock:requests`
+- `{queue}:payment:requests`
+- `{queue}:orchestrator:replies`
+
+This forces all queue keys to the same Redis Cluster hash slot (single node). At the 20-CPU benchmark scale, this is acceptable. Queue throughput is not the bottleneck -- business logic execution is.
+
+### Stale Message Handling
+
+Use XAUTOCLAIM to reclaim messages from crashed consumers (same pattern as existing compensation consumer in `consumers.py`). If a Stock replica crashes mid-processing, another replica in the same consumer group can claim the idle message.
+
+Queue consumers must ACK messages only after sending the reply. If a consumer crashes between processing and ACK, the message will be reclaimed and reprocessed. The idempotency layer on business logic functions ensures no double-execution.
 
 ---
 
-## Kubernetes Deployment Topology
+## Architecture Refactoring: Service Internals
 
-### Service Deployments
+### Stock Service (before and after)
 
-| Service | Min Replicas | Max Replicas | HPA Trigger | Notes |
-|---------|-------------|-------------|-------------|-------|
-| Order Service | 2 | 8 | CPU > 70% | Stateless; scales freely |
-| Stock Service | 2 | 8 | CPU > 70% | Stateless; scales freely |
-| Payment Service | 2 | 8 | CPU > 70% | Stateless; scales freely |
-| SAGA Orchestrator | 1 | 1 | Manual scaling only | State machine; single replica safe initially |
-| Nginx Ingress | 1 | 3 | CPU > 60% | Managed by ingress controller |
+**Before (v1.0):**
+```
+stock/
+  app.py          -- Quart HTTP routes + startup
+  grpc_server.py  -- gRPC servicer with embedded Lua business logic
+```
 
-### Redis Cluster Deployments
+**After (v2.0):**
+```
+stock/
+  app.py              -- Modified: conditionally starts queue consumer based on COMM_MODE
+  grpc_server.py      -- Modified: delegates to operations.py instead of inline Lua
+  operations.py       -- NEW: extracted business logic (reserve, release, check + 2PC prepare/commit/abort)
+  queue_consumer.py   -- NEW: Redis Streams consumer, dispatches commands to operations.py
+```
 
-Each domain gets its own Redis Cluster (via Bitnami Helm chart):
-- `order-redis-cluster`: 3 primary + 3 replica nodes
-- `stock-redis-cluster`: 3 primary + 3 replica nodes
-- `payment-redis-cluster`: 3 primary + 3 replica nodes
-- `orchestrator-redis`: Single Redis instance (or 1 primary + 1 replica for HA) for saga state
+### Payment Service (same pattern)
 
-### Resource Limits (per pod, approximate)
+**Before (v1.0):**
+```
+payment/
+  app.py          -- Quart HTTP routes + startup
+  grpc_server.py  -- gRPC servicer with embedded Lua business logic
+```
 
-- Order/Stock/Payment services: 0.5 CPU request, 1 CPU limit, 256Mi memory
-- SAGA Orchestrator: 0.5 CPU request, 1 CPU limit, 512Mi memory (holds saga state in memory during processing)
-- Redis Cluster nodes: 0.5 CPU, 1Gi memory per node
+**After (v2.0):**
+```
+payment/
+  app.py              -- Modified: conditionally starts queue consumer based on COMM_MODE
+  grpc_server.py      -- Modified: delegates to operations.py
+  operations.py       -- NEW: extracted business logic (charge, refund, check + 2PC prepare/commit/abort)
+  queue_consumer.py   -- NEW: Redis Streams consumer, dispatches commands to operations.py
+```
 
-### Total CPU Budget
+### Orchestrator (before and after)
 
-Under the 20 CPU benchmark limit:
-- 3 domain services x 8 pods x 0.5 CPU request = 12 CPU
-- 1 orchestrator x 1 pod x 0.5 CPU = 0.5 CPU
-- Redis Cluster nodes: 4 clusters x 3 primary nodes x 0.5 CPU = 6 CPU
-- Buffer: 1.5 CPU for Nginx and system overhead
+**Before (v1.0):**
+```
+orchestrator/
+  app.py          -- Quart startup
+  saga.py         -- SAGA state machine
+  grpc_server.py  -- gRPC servicer + run_checkout + run_compensation
+  client.py       -- gRPC client stubs (circuit breaker wrapped)
+  circuit.py      -- Circuit breaker instances
+  events.py       -- Fire-and-forget event publishing
+  consumers.py    -- Event stream consumers (compensation-handler, audit-logger)
+  recovery.py     -- Startup SAGA recovery scanner
+```
 
-Note: Limits must be tuned during benchmarking. HPA max replicas may need reduction depending on Redis CPU draw.
+**After (v2.0):**
+```
+orchestrator/
+  app.py              -- Modified: startup reads env vars, selects pattern + comm mode
+  saga.py             -- UNCHANGED
+  tpc.py              -- NEW: 2PC state machine (create, transition, get)
+  grpc_server.py      -- Modified: delegates to saga_coordinator or tpc_coordinator
+  saga_coordinator.py -- NEW: extracted SAGA run_checkout + run_compensation from grpc_server.py
+  tpc_coordinator.py  -- NEW: 2PC coordinator (run_checkout_2pc, run_commit, run_abort)
+  client.py           -- UNCHANGED: gRPC client stubs
+  queue_client.py     -- NEW: Redis Streams request/reply client (send_and_wait)
+  transport.py        -- NEW: selects client.py or queue_client.py based on COMM_MODE
+  reply_consumer.py   -- NEW: background consumer for reply stream, resolves Futures
+  circuit.py          -- UNCHANGED (only active when COMM_MODE=grpc)
+  events.py           -- UNCHANGED
+  consumers.py        -- UNCHANGED
+  recovery.py         -- Modified: dispatches to SAGA or 2PC recovery based on TRANSACTION_PATTERN
+  tpc_recovery.py     -- NEW: 2PC recovery scanner for stale transactions
+```
 
-### Network Topology
+---
 
-- All inter-service gRPC calls use Kubernetes ClusterIP services (internal DNS: `stock-service:50051`)
-- External traffic enters via Nginx Ingress on LoadBalancer service
-- Redis Clusters use headless services for cluster node discovery
+## Patterns to Follow
+
+### Pattern 1: Transport Adapter (Strategy Pattern)
+
+**What:** The transport layer is selected once at startup via env var. Transaction logic never imports from transport implementations directly.
+
+**When:** All inter-service calls from orchestrator to Stock/Payment.
+
+**How:**
+```python
+# orchestrator/transport.py
+import os
+
+COMM_MODE = os.environ.get("COMM_MODE", "grpc")
+
+if COMM_MODE == "queue":
+    from queue_client import (
+        reserve_stock, release_stock, charge_payment, refund_payment,
+        prepare_reserve, commit_reserve, abort_reserve,
+        prepare_charge, commit_charge, abort_charge,
+        init_transport, close_transport,
+    )
+else:
+    from client import (
+        reserve_stock, release_stock, charge_payment, refund_payment,
+        init_grpc_clients as init_transport,
+        close_grpc_clients as close_transport,
+    )
+    from client_2pc import (
+        prepare_reserve, commit_reserve, abort_reserve,
+        prepare_charge, commit_charge, abort_charge,
+    )
+```
+
+Both `saga_coordinator.py` and `tpc_coordinator.py` import from `transport.py`, never from `client.py` or `queue_client.py` directly.
+
+### Pattern 2: Transaction Coordinator Selector
+
+**What:** Select SAGA or 2PC coordinator at startup. The gRPC servicer delegates to whichever is active.
+
+**How:**
+```python
+# orchestrator/grpc_server.py (modified)
+import os
+
+TRANSACTION_PATTERN = os.environ.get("TRANSACTION_PATTERN", "saga")
+
+if TRANSACTION_PATTERN == "2pc":
+    from tpc_coordinator import run_checkout
+else:
+    from saga_coordinator import run_checkout
+
+class OrchestratorServiceServicer(...):
+    async def StartCheckout(self, request, context):
+        items = [{"item_id": item.item_id, "quantity": item.quantity} for item in request.items]
+        result = await run_checkout(self.db, request.order_id, request.user_id, items, request.total_cost)
+        return CheckoutResponse(success=result["success"], error_message=result["error_message"])
+```
+
+### Pattern 3: Business Logic Extraction
+
+**What:** Pure async functions that take a Redis client + request parameters and return result dicts. No gRPC or queue awareness.
+
+**When:** All Stock/Payment operations that both gRPC servicer and queue consumer need.
+
+**How:**
+```python
+# stock/operations.py
+async def reserve_stock(db, item_id: str, quantity: int, idempotency_key: str) -> dict:
+    """Returns {"success": bool, "error_message": str}"""
+    # Existing Lua CAS logic moved here from grpc_server.py
+    ...
+
+async def prepare_reserve(db, tx_id: str, items: list[dict]) -> dict:
+    """Returns {"vote_yes": bool, "error_message": str}"""
+    # NEW: multi-item atomic reservation for 2PC
+    ...
+```
+
+Both `grpc_server.py` and `queue_consumer.py` call these functions.
+
+### Pattern 4: Reuse Existing Lua Idempotency for 2PC
+
+**What:** 2PC operations use the same Lua-based idempotency mechanism already proven in v1.0.
+
+**Why:** The existing `RESERVE_STOCK_ATOMIC_LUA` and `CHARGE_PAYMENT_ATOMIC_LUA` scripts already provide exactly-once semantics via CAS. 2PC prepare is the same mutation with a different idempotency key prefix (`{2pc:<oid>}:step:prepare_stock` instead of `{saga:<oid>}:step:reserve:<iid>`).
+
+---
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Four Separate Code Paths
+
+**What:** Writing distinct checkout flows for each of the 4 env var combinations.
+
+**Why bad:** Quadratic code growth, impossible to test all combinations, bugs in one path not caught in others.
+
+**Instead:** Layer the abstractions. Transaction logic (SAGA or 2PC) calls transport-agnostic functions. Transport layer (gRPC or queue) implements those functions. The two axes are independent and composable.
+
+### Anti-Pattern 2: Queue Consumer Calling gRPC Servicer
+
+**What:** Stock/Payment queue consumer receives a message, then calls the gRPC servicer class methods.
+
+**Why bad:** Unnecessary serialization/deserialization roundtrip, coupling to gRPC types.
+
+**Instead:** Extract business logic into `operations.py`. Both gRPC servicer and queue consumer call the same operations.
+
+### Anti-Pattern 3: Synchronous Polling for Queue Replies
+
+**What:** After sending a queue request, busy-polling XREAD in a tight loop waiting for the reply.
+
+**Why bad:** Burns CPU, blocks the asyncio event loop, doesn't scale with concurrent requests.
+
+**Instead:** Use the asyncio.Future map with a single background reply consumer (Pattern described above).
+
+### Anti-Pattern 4: Mixing Event Streams and Command Streams
+
+**What:** Sending request/reply commands on the existing `{saga:events}:checkout` stream.
+
+**Why bad:** Different delivery guarantees (fire-and-forget vs. exactly-once), different consumer semantics, pollutes audit trail with operational messages.
+
+**Instead:** Separate stream topology. `{saga:events}:*` for events. `{queue}:*` for commands.
+
+---
+
+## Env Var Configuration Summary
+
+| Variable | Values | Default | Scope | Effect |
+|----------|--------|---------|-------|--------|
+| `TRANSACTION_PATTERN` | `saga`, `2pc` | `saga` | Orchestrator only | Selects SAGA or 2PC coordinator logic |
+| `COMM_MODE` | `grpc`, `queue` | `grpc` | All services | Orchestrator: selects client.py or queue_client.py. Stock/Payment: starts queue consumer if `queue` |
+
+**Deployment constraint:** Both env vars must be set consistently across ALL services. Mixed modes will fail silently. Kubernetes ConfigMap or Helm values should set these once for the entire deployment.
 
 ---
 
 ## Suggested Build Order
 
-The build order respects dependency chains: each phase can only start when its prerequisites are built and tested.
+Dependencies flow bottom-up: extract logic -> build transport -> build transaction pattern -> integrate.
 
-### Phase 1: Foundation
+### Phase 1: Extract Business Logic (prerequisite for everything)
 
-1. **Migrate to Quart+Uvicorn** (all three domain services)
-   - No external dependencies; validates async compatibility before adding complexity
-   - Order, Stock, Payment services become async; HTTP API unchanged
+**New files:** `stock/operations.py`, `payment/operations.py`
+**Modified files:** `stock/grpc_server.py`, `payment/grpc_server.py`
 
-2. **Add gRPC servers to domain services** (Stock, Payment, Order)
-   - Requires Quart+Uvicorn running (async gRPC server shares event loop)
-   - Define proto files; generate stubs; implement gRPC endpoints for transactional operations
-   - Test each service's gRPC interface in isolation
+Extract Lua-script-based business logic from gRPC servicers into standalone async functions. gRPC servicers become thin wrappers calling operations.py. This is a pure refactor -- zero behavior change.
 
-3. **Build SAGA Orchestrator service**
-   - Depends on gRPC stubs from step 2
-   - Implement state machine, Redis state persistence, idempotency key handling
-   - Wire the Order service `checkout` endpoint to call the orchestrator via gRPC instead of calling Stock/Payment directly
-   - Test the happy path end-to-end
+**Why first:** Both queue consumers AND 2PC participant operations need to call the same business logic. Without this extraction, we'd have to duplicate Lua scripts or create awkward coupling.
 
-4. **Implement compensating transactions and timeout/retry logic**
-   - Depends on orchestrator state machine existing
-   - Add compensation steps to state machine, timeout enforcement, compensation retry
+**Validation:** All existing integration tests pass unchanged after refactor.
 
-5. **Add Redis Streams integration**
-   - Depends on orchestrator existing (it produces events)
-   - Add XADD calls after each terminal state transition
-   - Add retry consumer that reads `saga.compensation.retry` stream
+### Phase 2: Redis Streams Request/Reply Infrastructure
 
-### Phase 2: Infrastructure Upgrade
+**New files:** `orchestrator/queue_client.py`, `orchestrator/reply_consumer.py`, `stock/queue_consumer.py`, `payment/queue_consumer.py`
+**Modified files:** `orchestrator/app.py`, `stock/app.py`, `payment/app.py` (conditional startup)
 
-6. **Configure Redis Cluster for each domain service**
-   - Depends on services being stable (do not refactor data layer during logic changes)
-   - Update Redis connection code to use redis-py cluster client
-   - Test data persistence under cluster failover
+Build the queue communication layer. Orchestrator sends commands via streams and receives replies. Stock/Payment consume from request streams and produce replies.
 
-7. **Update Kubernetes manifests**
-   - Depends on all services being containerized and Redis Cluster configured
-   - Add orchestrator Deployment and Service
-   - Add Redis Cluster Helm values
-   - Configure HPA for domain services
-   - Add Redis Streams to orchestrator Redis or separate stream Redis instance
+**Why second:** This is the new transport layer. Both SAGA and 2PC can use it. Building it with the existing SAGA flow means we can validate it against the known-good SAGA behavior.
 
-8. **Benchmark and tune**
-   - Run locust benchmark; identify bottleneck (likely connection pool sizes or Redis Cluster routing)
-   - Adjust HPA thresholds, replica counts, Redis connection pool sizes
+**Validation:** SAGA + queue mode passes all existing integration tests (same behavior, different transport).
+
+### Phase 3: Transport Adapter + COMM_MODE Toggle
+
+**New files:** `orchestrator/transport.py`
+**Modified files:** `orchestrator/saga_coordinator.py` (extracted from grpc_server.py), `orchestrator/grpc_server.py`
+
+Wire up the env var toggle. Extract `run_checkout` and `run_compensation` from `grpc_server.py` into `saga_coordinator.py`. Both import from `transport.py` instead of `client.py` directly.
+
+**Why third:** Connects Phase 2 to existing SAGA flow through a clean abstraction.
+
+**Validation:** Toggle `COMM_MODE` between `grpc` and `queue`, run full test suite -- both pass.
+
+### Phase 4: 2PC State Machine + Participant Operations
+
+**New files:** `orchestrator/tpc.py`, 2PC RPCs added to protos, 2PC functions in `stock/operations.py` and `payment/operations.py`
+**Modified files:** `stock/grpc_server.py`, `payment/grpc_server.py` (add 2PC RPC handlers), `stock/queue_consumer.py`, `payment/queue_consumer.py` (add 2PC command dispatch)
+
+Build the 2PC state machine (create record, Lua CAS transitions) and participant-side prepare/commit/abort operations. Add new RPCs to proto files.
+
+**Why fourth:** Depends on extracted business logic (Phase 1). The 2PC state machine mirrors saga.py closely and can be unit-tested in isolation.
+
+**Validation:** Unit tests for 2PC state transitions. Prepare/commit/abort operations work in isolation.
+
+### Phase 5: 2PC Coordinator + Recovery
+
+**New files:** `orchestrator/tpc_coordinator.py`, `orchestrator/tpc_recovery.py`
+**Modified files:** `orchestrator/recovery.py` (dispatch to SAGA or 2PC), `orchestrator/grpc_server.py` (TRANSACTION_PATTERN toggle)
+
+Implement the 2PC coordination flow (concurrent prepare, decision, commit/abort with retry-forever) and the recovery scanner.
+
+**Why fifth:** Depends on 2PC state machine (Phase 4) and transport adapter (Phase 3). This is the highest-complexity new code.
+
+**Validation:** 2PC + gRPC end-to-end. 2PC + queue end-to-end. Recovery for stuck 2PC transactions.
+
+### Phase 6: Integration Testing + Benchmark
+
+**Modified files:** `orchestrator/app.py` (final wiring), integration test suite
+**New files:** Test configurations for all 4 combinations
+
+Wire everything together. Update startup code. Run integration tests for all 4 env var combinations. Run benchmark with 0 consistency violations.
+
+**Validation:** All 4 combinations pass integration tests. Benchmark passes for each.
+
+### Build Order Dependency Graph
+
+```
+Phase 1: Extract Business Logic
+    |
+    +---> Phase 2: Queue Infrastructure
+    |         |
+    |         +---> Phase 3: Transport Adapter
+    |                   |
+    +---> Phase 4: 2PC State Machine + Participants
+              |         |
+              +----+----+
+                   |
+                   v
+             Phase 5: 2PC Coordinator
+                   |
+                   v
+             Phase 6: Integration
+```
+
+Phases 2 and 4 can be developed in parallel after Phase 1.
 
 ---
 
-## Key Architectural Constraints and Tradeoffs
+## Scalability Considerations
 
-**SAGA vs 2PC:** Redis does not support XA transactions, ruling out 2PC. SAGAs with compensating transactions are the correct pattern. The tradeoff is eventual consistency during the compensation window — a brief period where stock is deducted but payment has not yet been confirmed. Idempotency keys and the orchestrator's durable state log mitigate this.
-
-**Orchestrator as single replica:** Running one orchestrator replica eliminates split-brain risk in the state machine. If orchestrator pod dies, Kubernetes restarts it and it resumes in-progress sagas from Redis state. The recovery window is the pod restart time (~5-10 seconds), which is acceptable.
-
-**gRPC for internal, HTTP for external:** The external benchmark hits HTTP endpoints. gRPC is added as a second server within each service process. This maintains the required API contract while gaining gRPC performance for internal coordination.
-
-**Redis Streams over Kafka:** Operational simplicity wins at this scale. The benchmark runs against 20 CPUs; Kafka brokers would consume a meaningful fraction of that budget with no clear performance benefit over Redis Streams for three event topics.
-
----
-
-## Build Order Implications for Roadmap Phases
-
-| Build Step | Phase | Blocks |
-|-----------|-------|--------|
-| Quart+Uvicorn migration | Phase 1 | All subsequent steps |
-| gRPC stubs + domain service gRPC servers | Phase 1 | Orchestrator build |
-| SAGA Orchestrator (state machine + persistence) | Phase 1 | Compensation logic, Redis Streams |
-| Compensating transactions + timeouts | Phase 1 | Correct fault tolerance |
-| Redis Streams integration | Phase 1 | Async event coordination |
-| Redis Cluster configuration | Phase 2 | K8s infrastructure |
-| Kubernetes HPA + orchestrator deployment | Phase 2 | Benchmark readiness |
-| Benchmark tuning | Phase 2 | Final submission |
+| Concern | v1.0 (SAGA+gRPC) | v2.0 Queue Mode | v2.0 2PC Mode |
+|---------|-------------------|-----------------|---------------|
+| Inter-service latency | ~1ms (gRPC direct) | ~3-5ms (XADD + XREADGROUP + XADD reply) | Same as transport layer |
+| Concurrent requests | Limited by gRPC channel capacity | Limited by reply consumer throughput | Slightly better -- parallel prepare |
+| Load balancing | Single gRPC stub (no balancing) | Automatic via consumer groups | Same as transport layer |
+| Service scaling | HPA but gRPC routes to one pod | Consumer groups auto-distribute | Same |
+| Failure detection | Circuit breaker + gRPC timeout | Reply timeout + XAUTOCLAIM | Prepare timeout = vote NO |
+| Message durability | None (gRPC is transient) | Redis Streams with AOF | Same |
+| Orchestrator replicas | 1 (split-brain avoidance) | 1 (single reply consumer) | 1 (single coordinator) |
 
 ---
 
-*Research authored: 2026-02-27*
+## Sources
+
+- Existing v1.0 codebase (direct code reading) -- HIGH confidence
+- Redis Streams XREADGROUP, XADD, consumer groups -- HIGH confidence (already used in v1.0 for events)
+- 2PC protocol semantics (distributed systems literature) -- HIGH confidence (well-established algorithm)
+- Redis limitation re: no native XA/prepare-commit -- HIGH confidence (confirmed in PROJECT.md, inherent to Redis design)
+- asyncio.Future for correlation-based request/reply -- HIGH confidence (standard Python asyncio pattern)
+
+---
+
+*Research authored: 2026-03-12 for v2.0 milestone*

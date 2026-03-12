@@ -1,401 +1,270 @@
-# Features Research: Distributed Checkout System
+# Feature Research
 
-**Research Date:** 2026-02-27
-**Milestone:** Phase 1 — SAGA pattern, fault tolerance, and consistency guarantees
-**Context:** Adding distributed transaction coordination to an existing Flask+Redis checkout system (Order, Stock, Payment services)
+**Domain:** 2PC transaction coordination and Redis Streams request/reply messaging for distributed checkout
+**Researched:** 2026-03-12
+**Confidence:** HIGH (2PC is a well-understood protocol; Redis Streams request/reply is application-level but well-documented)
 
----
+## Context: What Already Exists (v1.0)
 
-## What This Research Covers
+All v1.0 features are shipped and validated with 0 consistency violations. This research covers ONLY the new v2.0 features:
+- **2PC** as an alternative to SAGA (env var switchable)
+- **Redis Streams message queues** as default inter-service communication (replacing gRPC as default, gRPC kept as fallback)
 
-This document maps the features a production-grade distributed checkout system needs for SAGA orchestration, idempotency, crash recovery, consistency guarantees, and observability — then classifies each as table stakes (graded), differentiators (grade boosters), or anti-features (traps to avoid) for the DDS26-8 TU Delft course evaluation.
-
-**Evaluation criteria driving classification:**
-1. Consistency — no lost money or item counts (kill-container test)
-2. Performance — latency and throughput (locust benchmark, 20 CPU max)
-3. Architecture Difficulty — synchronous < asynchronous < event-driven (harder = more points)
+Existing v1.0 components this builds on: SAGA orchestrator, gRPC Stock/Payment calls with idempotency, Redis Streams events with consumer groups, circuit breakers, Lua atomic operations, startup recovery, kill-test consistency.
 
 ---
 
-## Table Stakes
+## Feature Landscape
 
-*Must-have for consistency and correctness. The course benchmark and kill-container test will exercise these directly. Missing any of these means failing the consistency evaluation.*
+### Table Stakes (Required for v2.0 Milestone)
 
----
+Features the milestone explicitly requires. Missing any = incomplete milestone.
 
-### SAGA-1: Persistent SAGA State
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| 2PC state machine with Lua CAS | Core protocol: PREPARING, PREPARED, COMMITTING, COMMITTED, ABORTING, ABORTED. Without explicit states, cannot reason about crash recovery. | MEDIUM | Parallels `saga.py`. Reuse Lua CAS transition pattern. New module `twopc.py`. |
+| 2PC coordinator flow in orchestrator | Orchestrator drives prepare-all-then-commit-or-abort. PROJECT.md requires "Orchestrator as 2PC coordinator." | MEDIUM | New `run_2pc_checkout()` alongside existing `run_checkout()`. Same retry/compensation infrastructure. |
+| 2PC participant logic in Stock/Payment | Participants must handle PREPARE (tentatively lock resources), COMMIT (finalize), ABORT (release). Currently Stock/Payment do immediate reserve/charge in one step. 2PC splits this into two phases. | HIGH | Hardest feature. Current Lua scripts do atomic reserve-in-one-step. 2PC needs: (1) PREPARE = write tentative reservation with flag, (2) COMMIT = mark tentative as final, (3) ABORT = delete tentative record. New Lua scripts. |
+| 2PC transaction log persistence | Coordinator must persist decision before sending phase-2 messages. Classic 2PC requirement: if coordinator crashes after deciding COMMIT but before notifying participants, recovery replays the decision. | MEDIUM | Redis hash `{2pc:<order_id>}` storing state, participants, votes, decision. Same pattern as `{saga:<order_id>}`. |
+| 2PC timeout and abort on failure | If any participant votes NO or times out during prepare, coordinator ABORTs all. Fundamental 2PC safety guarantee. | MEDIUM | Reuse `retry_forward` bounded retry. On failure, send ABORT to all participants that received PREPARE. |
+| 2PC recovery scanner | On startup, scan for incomplete 2PC transactions and drive to terminal state. Coordinator crash between PREPARED and COMMITTED is THE classic 2PC failure. | MEDIUM | Extend `recovery.py` pattern. If decision was COMMIT, replay commit. If no decision logged, ABORT (presumed-abort). |
+| 2PC idempotency | Duplicate PREPARE/COMMIT/ABORT must be safe. Coordinator retries must not cause double-reservations. | MEDIUM | Reuse idempotency key pattern. `{2pc:<order_id>}:prepare:<service>`, `{2pc:<order_id>}:commit:<service>`. |
+| Redis Streams request/reply messaging | Replace synchronous gRPC with async message-based communication. Orchestrator publishes request to service's request stream, service reads and publishes reply to reply stream. | HIGH | No built-in request/reply in Redis Streams. Must implement: correlation IDs, reply routing, timeout handling. |
+| Correlation ID for request/reply | Each request needs unique correlation ID. Reply includes same ID so caller matches response to request. Without this, concurrent requests are indistinguishable. | MEDIUM | Use `order_id:step` as correlation ID (same pattern as idempotency keys). Caller blocks on XREAD with correlation ID filter. |
+| Reply timeout handling | Caller must not block forever waiting for reply. Configurable timeout per request. | LOW | XREAD with BLOCK timeout. If timeout expires, treat as failure. Integrate with circuit breaker. |
+| `TRANSACTION_MODE` env var toggle | PROJECT.md: "env var toggle alongside SAGA." Must switch between SAGA and 2PC. | LOW | `TRANSACTION_MODE=saga` (default) or `TRANSACTION_MODE=2pc`. Orchestrator checkout dispatches accordingly. |
+| `COMM_MODE` env var toggle | PROJECT.md: "gRPC kept as fallback communication path (env var toggle)." | LOW | `COMM_MODE=grpc` (fallback) or `COMM_MODE=queue` (default). `client.py` switches transport. |
+| Consumer group per service for requests | Each Stock/Payment instance joins consumer group on its request stream. Load-balances requests across replicas. | LOW | Existing `consumers.py` pattern applies directly. XREADGROUP with `>`, XAUTOCLAIM for stuck messages. |
 
-**What it is:** Every checkout transaction creates a SAGA record in durable storage before any side effects occur. The record tracks which steps have completed and what compensations are needed.
+### Differentiators (Grade Boosters)
 
-**Why it's required:** When a container is killed mid-transaction (the exact evaluation scenario), the system must know what happened. Without persisted state, a crash between stock deduction and payment leaves the system permanently inconsistent — stock reduced, payment never taken, no record of what to roll back.
+Beyond minimum requirements; demonstrate deeper understanding.
 
-**Minimum viable form:** A Redis key per saga_id storing: `{saga_id, order_id, status, steps_completed[], compensation_log[]}`. Status transitions: STARTED → STOCK_RESERVED → PAYMENT_PENDING → COMPLETED | COMPENSATING → COMPENSATED.
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| Unified test suite (SAGA/2PC x gRPC/queue) | Run same benchmark and consistency tests in all 4 mode combinations. Proves both patterns achieve 0 consistency violations. Very high grade value. | LOW | Parameterize existing 37 integration tests + kill-tests with env vars. Minimal code, maximum proof. |
+| 2PC lifecycle events | Publish 2PC events to Redis Streams audit trail. Same pattern as SAGA events in `events.py`. | LOW | New event types: `2pc_prepare_sent`, `2pc_vote_yes`, `2pc_vote_no`, `2pc_committed`, `2pc_aborted`. |
+| Presumed-abort optimization | If coordinator has no logged COMMIT decision for a transaction, presume ABORT. Participants that timeout waiting for phase-2 can safely abort. Reduces Redis writes. | LOW | Standard 2PC optimization. Simplifies recovery: absence of commit record = abort. |
+| Dead letter queue for failed requests | Request messages that fail processing N times move to dead-letter stream. Prevents infinite retry loops. | LOW | Copy existing dead-letter pattern from `consumers.py`. |
+| Graceful communication mode switching | Allow runtime switching between gRPC and queue modes without restart (hot-swap). | MEDIUM | Probably overkill for course, but would demonstrate deep understanding. Not recommended unless time permits. |
 
-**Complexity:** Medium. Redis WATCH/MULTI/EXEC or a single hset with field-level updates. The schema must be designed upfront because changes require migration.
+### Anti-Features (Do Not Build)
 
-**Dependencies:** SAGA-2 (orchestrator), SAGA-5 (idempotency), CRASH-1 (recovery on startup).
-
----
-
-### SAGA-2: SAGA Orchestrator Service
-
-**What it is:** A dedicated coordinator (separate from the Order service) that drives the checkout workflow: reserve stock → charge payment → confirm order → done. On failure, it drives compensation in reverse: refund payment → restore stock → mark order failed.
-
-**Why it's required:** The current `order/app.py` does inline rollback with no durability guarantees. If the order service crashes during rollback, rollback stops silently. An orchestrator with persisted state can resume compensation from wherever it left off.
-
-**Minimum viable form:** A single orchestrator module (can live inside the Order service as a separate class/module for Phase 1, extracted as a standalone service for Phase 2). Accepts checkout commands, drives steps sequentially, writes state transitions to Redis before each step.
-
-**Complexity:** High. Most complex single piece of the system. Every state transition must be atomic with respect to the SAGA log. Requires careful sequencing: log the intent, perform the action, log the result.
-
-**Dependencies:** SAGA-1 (persistent state), IDMP-1 (idempotent steps), CRASH-1 (recovery trigger).
-
-**Note for Phase 2:** The course explicitly requires extracting this as a separate abstraction. Design the orchestrator with a clean interface from day one. The boundary is: Order service owns order domain logic, Orchestrator owns transaction coordination.
-
----
-
-### SAGA-3: Compensating Transactions with Guaranteed Execution
-
-**What it is:** Each SAGA step has a corresponding compensation action. Compensations must be idempotent and must be retried until they succeed. A compensation cannot fail permanently.
-
-**Existing state:** The current `rollback_stock()` makes HTTP calls to restore stock. If any restore call fails (service down, network error), it silently drops the rollback and returns an error. This is incorrect behavior for a compensation.
-
-**Minimum viable form:**
-- Stock compensation: `add_stock(item_id, quantity)` — idempotent, retried until success
-- Payment compensation: `refund_payment(user_id, amount)` — idempotent, retried until success
-- Compensations must be logged to SAGA state before execution so they are not lost on crash
-
-**Complexity:** Medium-High. The compensation logic itself is simple (reverse the operation), but guaranteeing execution requires retry loops with backoff and the orchestrator must persist "compensation in progress" state.
-
-**Dependencies:** SAGA-1 (state log), IDMP-1 (idempotent operations), SAGA-2 (orchestrator drives retries).
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| Distributed locks (Redlock) for 2PC prepare | "Need to lock resources during prepare phase" | Redlock adds latency and known-flawed consensus. Redis Lua scripts already provide atomicity. Tentative reservation via Lua CAS is simpler and faster. | Lua scripts with "tentative" flag for prepared-but-not-committed resources. |
+| Full XA transaction protocol | "2PC should use proper XA" | Redis does not support XA. Application-level 2PC with Redis-persisted coordinator state is the correct approach for this stack. | Application-level 2PC with Lua-atomic participant operations. |
+| Separate message broker (RabbitMQ/Kafka) | "Redis Streams is not a real message queue" | Adds infra, CPU budget, operational complexity, and new client library. Redis Streams with consumer groups already provides needed semantics. Course constraint is Redis. | Redis Streams with consumer groups, XAUTOCLAIM, dead-letter handling. |
+| Blocking resource locks during 2PC | "Participants should hold locks until commit/abort" | Redis has no database-level locks. Simulating blocking locks via key TTL risks deadlocks and stale locks on crashes. | Tentative reservation pattern: PREPARE writes tentative record, COMMIT finalizes, ABORT deletes. No blocking needed. |
+| Two-way streaming for message queue | "Bidirectional channels for richer communication" | Overengineered for checkout. Hard to reason about ordering and backpressure. | Simple request stream + reply stream with correlation IDs. |
+| 2PC with blocking participants | "True 2PC blocks participants until coordinator decides" | In a Redis-backed system, blocking means resource starvation. Tentative-write + async commit achieves same safety without blocking threads. | Tentative writes: PREPARE writes data marked as "tentative", reads skip tentative data, COMMIT removes the flag, ABORT deletes. |
 
 ---
 
-### SAGA-4: Exactly-Once Checkout Semantics
-
-**What it is:** A single checkout request produces exactly one transaction outcome regardless of how many times it is submitted. Retrying a checkout that already succeeded returns the success result without re-executing.
-
-**Why it's required:** The locust benchmark will hammer the system with concurrent requests. Network timeouts cause clients to retry. Without this, a retry after a successful payment charges the user twice.
-
-**Minimum viable form:** An idempotency key on the checkout endpoint (can use order_id as the natural key — an order can only be checked out once). Before starting a new SAGA, check if a SAGA already exists for this order_id. If completed, return the existing result. If in-progress, return 409 or wait.
-
-**Complexity:** Medium. The order_id as natural idempotency key simplifies this significantly compared to client-generated keys. Redis SET NX (set if not exists) on the SAGA key provides the atomic check-and-create.
-
-**Dependencies:** SAGA-1 (SAGA record stores outcome), SAGA-2 (orchestrator checks before starting).
-
----
-
-### IDMP-1: Idempotent Service Operations
-
-**What it is:** Individual service operations (subtract stock, charge payment) can be called multiple times with the same parameters and produce the same result without double-applying effects.
-
-**Why it's required:** The orchestrator must retry failed steps. If a gRPC call to the Stock service times out (network partition, not a crash), the orchestrator doesn't know if the subtraction happened. It must be able to call subtract again safely.
-
-**Minimum viable form:** Each operation accepts an optional `idempotency_key` parameter (can be `saga_id + step_name`). The service checks if this key was already processed. If yes, return the previous result without re-applying.
-
-**Implementation for Redis:** Store processed keys with a TTL (e.g., 24 hours): `SET idempotent:{key} result EX 86400`. Before executing, check this key. This adds one Redis read per operation but eliminates double-application bugs.
-
-**Complexity:** Medium. The mechanism is straightforward. The tricky part is defining what "same result" means when the underlying state has changed (e.g., stock was added then subtracted again). Scoping idempotency to the SAGA step key solves this.
-
-**Dependencies:** SAGA-3 (compensations must be idempotent), SAGA-4 (checkout idempotency).
-
----
-
-### CRASH-1: Crash Recovery on Service Startup
-
-**What it is:** When a service restarts after a crash, it scans for in-progress SAGAs and either completes them or compensates them. No SAGA is abandoned in a partial state.
-
-**Why it's required:** This is the explicit evaluation scenario — kill one container, let system recover, check consistency. If the orchestrator crashes mid-checkout, all in-flight transactions must resolve to one of: fully committed or fully compensated.
-
-**Minimum viable form:** On orchestrator startup, query Redis for all SAGAs with status STARTED, STOCK_RESERVED, or PAYMENT_PENDING. For each:
-- If STARTED and no steps completed: mark COMPENSATED (nothing happened yet, safe)
-- If STOCK_RESERVED and payment not attempted: trigger compensation (restore stock)
-- If PAYMENT_PENDING (timeout ambiguous): query payment service for final status, then commit or compensate
-
-**Complexity:** Medium-High. The startup scan must handle concurrent recovery (multiple orchestrator instances starting simultaneously) — use Redis SET NX to claim a SAGA for recovery before processing.
-
-**Dependencies:** SAGA-1 (persistent state to scan), IDMP-1 (recovery operations must be idempotent), SAGA-2 (orchestrator drives recovery).
-
----
-
-### CONCUR-1: Read-Modify-Write Atomicity in Redis
-
-**What it is:** Stock subtraction and payment deduction must be atomic. Two concurrent checkouts for the same item cannot both read the same stock level and both succeed, leaving the count negative.
-
-**Existing state:** Current code does `GET item → check stock → SET item` without any concurrency protection. This is a documented bug in CONCERNS.md — concurrent checkouts on the same item will oversell.
-
-**Minimum viable form:** Use Redis `WATCH/MULTI/EXEC` (optimistic locking). WATCH the key, read the value, compute new value, execute MULTI/EXEC — if key changed between WATCH and EXEC, the transaction aborts and must retry.
-
-**Alternative:** Redis Lua scripts execute atomically on the server. A Lua script for `subtract_stock` that checks-and-subtracts in one atomic operation is simpler than WATCH/MULTI/EXEC and does not require client-side retry loops.
-
-**Complexity:** Low-Medium. Redis Lua scripts are the simpler path. The script is ~10 lines. The tricky part is handling the MULTI/EXEC retry loop correctly if using WATCH approach.
-
-**Dependencies:** IDMP-1 (concurrent retries need idempotency), SAGA-3 (compensations touch the same keys).
-
----
-
-### PERF-1: Async Framework Migration (Quart+Uvicorn)
-
-**What it is:** Replace Flask+Gunicorn with Quart+Uvicorn. Quart is an async-compatible Flask fork. Uvicorn is an ASGI server.
-
-**Why it's required for this milestone:** Async I/O is mandatory for gRPC inter-service calls (grpcio-tools requires async context) and for handling concurrent requests without thread exhaustion. With 2 Gunicorn workers and blocking HTTP calls, the system saturates quickly under locust load.
-
-**Complexity:** Medium. Quart's API is near-identical to Flask. Route handlers change from `def` to `async def`, and calls to gRPC/Redis use `await`. Most existing code migrates mechanically. The risk is async-incompatible dependencies.
-
-**Dependencies:** PERF-2 (gRPC requires async), all service endpoints must be re-validated after migration.
-
----
-
-### PERF-2: gRPC for Inter-Service Communication
-
-**What it is:** Replace HTTP REST calls between services with gRPC (binary protocol, HTTP/2, strongly-typed contracts via protobuf).
-
-**Why it's required for this milestone:** Team decision already made. gRPC has lower per-call overhead and enables streaming. More importantly, gRPC provides proper status codes for retry logic (UNAVAILABLE vs ALREADY_EXISTS vs OK), which the current requests library conflates into HTTP 400s.
-
-**Minimum viable form:** Define `.proto` files for StockService, PaymentService operations used by the orchestrator. Generate Python stubs. Replace `send_post_request()` calls in the orchestrator with gRPC stub calls.
-
-**Complexity:** Medium-High. Protobuf schema design is upfront cost. gRPC-asyncio client requires Quart-compatible async patterns. Connection management (channel pooling, reconnects) needs explicit handling.
-
-**Dependencies:** PERF-1 (async framework), SAGA-3 (retry logic uses gRPC status codes).
-
----
-
-### CONSIST-1: Redis Cluster for High Availability
-
-**What it is:** Replace single Redis instances with Redis Cluster (3 primary + 3 replica nodes). Cluster provides automatic failover — if a primary crashes, its replica is promoted.
-
-**Why it's required:** The kill-container test kills services AND potentially databases. If the stock-db Redis instance crashes, all stock operations fail permanently. With Redis Cluster, the replica takes over within seconds.
-
-**Minimum viable form:** Redis Cluster configured with `cluster-enabled yes`, at least 3 primaries. Application connects via cluster-aware Redis client (`redis-py` with `RedisCluster` client class).
-
-**Note:** SAGA state storage (SAGA-1) must also use Redis Cluster. Single-node Redis for SAGA state defeats the purpose if that node crashes.
-
-**Complexity:** Medium. Redis Cluster is well-supported in `redis-py`. Kubernetes StatefulSet configuration for Redis Cluster is the harder part (persistent volumes, pod disruption budgets).
-
-**Dependencies:** All SAGA features (SAGA state is stored in Redis), CRASH-1 (recovery needs Redis to be available after crash).
-
----
-
-## Differentiators
-
-*Features that earn Architecture Difficulty points or demonstrate deeper understanding. Not tested directly by the benchmark, but evaluated in the rigorous interview and assessed in architecture document.*
-
----
-
-### DIFF-1: Event-Driven SAGA via Message Queue (Choreography Layer)
-
-**What it is:** In addition to (or instead of) the orchestrator driving steps via direct gRPC calls, services emit domain events to a message queue (Kafka or Redis Streams). Services subscribe to events and react independently.
-
-**Why it differentiates:** The evaluation criteria explicitly score event-driven architecture higher than synchronous or async-but-synchronous. Pure orchestration with gRPC is asynchronous but still synchronous in coordination (orchestrator waits for each reply). Event-driven choreography decouples services in time.
-
-**Example flow:** Orchestrator publishes `CheckoutStarted` → Stock service consumes and publishes `StockReserved` or `StockFailed` → Orchestrator consumes and publishes `PaymentRequested` → Payment service consumes and publishes `PaymentCompleted` or `PaymentFailed` → Orchestrator consumes and commits or compensates.
-
-**Kafka vs Redis Streams:** Both qualify. Redis Streams has lower operational overhead (same Redis cluster already required). Kafka has better consumer group semantics and broader industry recognition. For the course, Redis Streams is probably the pragmatic choice.
-
-**Complexity:** High. Adds consumer group management, at-least-once delivery handling, event schema versioning concerns, and partial failure during event processing. Significantly harder to debug than direct gRPC calls.
-
-**Dependencies:** SAGA-1 (state must track event correlation), IDMP-1 (events may be delivered more than once), SAGA-2 (orchestrator now consumes events instead of awaiting gRPC replies).
-
-**Trade-off:** Worth doing if time allows. Interview questions will probe whether the team understands the consistency implications of at-least-once vs exactly-once event delivery. Do not add this without understanding the answers.
-
----
-
-### DIFF-2: Outbox Pattern for Reliable Event Publishing
-
-**What it is:** Instead of publishing events directly to Kafka/Redis Streams after a database write (which creates a dual-write problem), write events to an "outbox" table in Redis atomically with the state change. A background poller reads the outbox and publishes events, then marks them as sent.
-
-**Why it differentiates:** This is the correct solution to "what happens if the service crashes after writing to Redis but before publishing the event?" Without the outbox pattern, events are lost. With it, events are published reliably even after crashes.
-
-**Complexity:** Medium. The outbox is a Redis sorted set ordered by timestamp. The poller is a background asyncio task. The tricky part is handling "at least once" semantics (event may be published twice if the poller crashes after publishing but before marking sent) — which requires IDMP-1 to already be in place.
-
-**Dependencies:** DIFF-1 (requires message queue), IDMP-1 (downstream consumers must handle duplicate events), SAGA-1 (outbox entries tied to SAGA state).
-
----
-
-### DIFF-3: Circuit Breaker for Service Dependencies
-
-**What it is:** Track failure rates for calls to each downstream service (Stock, Payment). When the failure rate exceeds a threshold (e.g., 5 failures in 10 seconds), open the circuit — fail fast without attempting the call. After a timeout, allow one trial call through (half-open state). On success, close the circuit.
-
-**Why it differentiates:** Prevents cascade failures. When the Payment service is overloaded, the Stock service should not also fail because it is waiting for Payment responses. Circuit breakers are a standard resilience pattern discussed in distributed systems courses.
-
-**Complexity:** Medium. Python library `tenacity` handles retry logic; circuit breaker requires either a library (`pybreaker`) or ~80 lines of custom code. State must be shared across async workers (store in Redis or in-process with asyncio lock).
-
-**Dependencies:** PERF-1 (async framework), PERF-2 (gRPC calls are what's circuit-broken), SAGA-2 (orchestrator opens circuit on repeated SAGA failures).
-
----
-
-### DIFF-4: Distributed Tracing
-
-**What it is:** Propagate a trace ID through every SAGA step, gRPC call, and Redis operation. Use OpenTelemetry to emit traces. Visualize in Jaeger or Zipkin.
-
-**Why it differentiates:** Makes distributed transaction debugging tractable. Without tracing, debugging "why did this checkout fail" in a distributed system means correlating logs across 3+ services by timestamp and guessing. With tracing, the entire checkout flow is visible in one UI with timing and error attribution.
-
-**Practical value:** During the interview, being able to show a trace of a failed SAGA with compensation is significantly more convincing than describing it verbally.
-
-**Complexity:** Medium. OpenTelemetry Python SDK auto-instruments gRPC and Redis. Manual instrumentation needed for SAGA steps. Jaeger runs as an additional container. The main cost is time, not complexity.
-
-**Dependencies:** PERF-2 (gRPC instrumented automatically), SAGA-2 (add span per SAGA step).
-
----
-
-### DIFF-5: Kubernetes HPA with Custom Metrics
-
-**What it is:** Configure Horizontal Pod Autoscaler to scale service replicas based on checkout queue depth or pending SAGA count (custom Prometheus metrics), rather than just CPU utilization.
-
-**Why it differentiates:** CPU-based autoscaling is the default and straightforward. Custom metric autoscaling demonstrates understanding of application-level load signals. Under locust benchmark, queue depth is a more accurate scaling signal than CPU for I/O-bound services.
-
-**Complexity:** Medium-High. Requires Prometheus adapter for Kubernetes custom metrics API, plus Prometheus scraping the application metrics endpoint. Non-trivial to configure correctly.
-
-**Dependencies:** PERF-1 (async framework produces different CPU profiles), correct resource limits in K8s manifests.
-
----
-
-### DIFF-6: SAGA State Machine with Explicit Transitions
-
-**What it is:** Model SAGA state as an explicit finite state machine with validated transitions. Invalid transitions (e.g., COMPENSATED → STOCK_RESERVED) raise errors. All transitions are logged.
-
-**Why it differentiates:** Demonstrates formalism about distributed transaction states. Easy to reason about correctness. Easy to present in the architecture document.
-
-**Minimum viable form:** A Python enum for SAGA states and a transition table. The orchestrator validates before writing new state. ~50 lines of code but high conceptual value.
-
-**Complexity:** Low. Pure Python. No additional infrastructure.
-
-**Dependencies:** SAGA-1 (state storage), SAGA-2 (orchestrator enforces transitions).
-
----
-
-## Anti-Features
-
-*Things to deliberately not build. These are over-engineering traps that consume time without improving the grade.*
-
----
-
-### ANTI-1: Two-Phase Commit (2PC) Protocol
-
-**Why not:** Redis does not support XA transactions. Implementing 2PC across three Redis instances requires a custom coordinator that is strictly harder to build correctly than SAGA. The course constraint (Redis as database) makes 2PC a wrong fit, not a harder version of the right answer. SAGAs are the correct choice here.
-
-**What to say in the interview:** "We chose SAGA over 2PC because Redis doesn't support XA/distributed transactions. SAGA's compensating transaction model is the appropriate pattern for services with independent data stores. 2PC would require either a custom distributed lock manager or accepting that one component failure blocks the entire system."
-
----
-
-### ANTI-2: Custom Message Queue Implementation
-
-**Why not:** Building a custom queue on top of raw Redis keys (not Redis Streams) wastes significant time. Redis Streams (or Kafka) already provide consumer groups, at-least-once delivery, retention, and replay. A custom implementation will be buggy under concurrent consumers.
-
----
-
-### ANTI-3: Saga Choreography Without Orchestration
-
-**Why not:** Pure choreography (services react to events without a central coordinator) is architecturally elegant but harder to make crash-recoverable. Without a coordinator tracking SAGA state, determining "which compensations have run" requires querying multiple services and correlating event logs. For a 3-service system, an orchestrator is simpler and more robust.
-
-**Note:** Adding choreography on top of orchestration (DIFF-1) is valuable. Replacing orchestration with pure choreography is not.
-
----
-
-### ANTI-4: Synchronous Distributed Locking with Redis SETNX
-
-**Why not:** Using Redis SETNX as a distributed lock for checkout (lock the order, run checkout, unlock) is tempting but incorrect. Locks require TTL management, lock extension under slow operations, and proper release on crash. Redlock (the standard Redis distributed lock) has known edge cases under clock skew. The correct approach is idempotency (IDMP-1) + optimistic concurrency (CONCUR-1), not locks.
-
----
-
-### ANTI-5: Full Event Sourcing
-
-**Why not:** Storing all state as an immutable event log (event sourcing) instead of mutable Redis records is a significant architectural change. It adds complexity (projections, snapshots, event schema migration) and time cost that far exceeds the grade benefit. The course is not evaluating event sourcing.
-
----
-
-### ANTI-6: Authentication and Authorization
-
-**Why not:** Explicitly out of scope per course requirements. The benchmark and kill-container test do not authenticate. Adding JWT validation, API keys, or RBAC consumes time with zero grade impact.
-
----
-
-### ANTI-7: Custom Benchmark
-
-**Why not:** Bonus points only per project spec. If everything else works, this is fine. If building custom benchmark competes for time with SAGA implementation or crash recovery, defer it.
-
----
-
-## Feature Dependencies Map
+## Feature Dependencies
 
 ```
-SAGA-1 (Persistent State)
-  └── required by SAGA-2 (Orchestrator)
-  └── required by CRASH-1 (Recovery)
-  └── required by SAGA-4 (Exactly-Once)
-  └── required by DIFF-2 (Outbox Pattern)
+[TRANSACTION_MODE env var toggle]
+    └──requires──> [2PC coordinator flow]
+                       └──requires──> [2PC state machine]
+                       └──requires──> [2PC participant logic (Stock + Payment)]
+                       └──requires──> [2PC transaction log persistence]
+                       └──requires──> [2PC timeout/abort handling]
+                       └──requires──> [2PC idempotency]
 
-SAGA-2 (Orchestrator)
-  └── required by SAGA-3 (Compensating Transactions)
-  └── required by CRASH-1 (Recovery)
-  └── required by DIFF-1 (Event-Driven Layer)
-  └── required by DIFF-3 (Circuit Breaker)
+[2PC recovery scanner]
+    └──requires──> [2PC transaction log persistence]
+    └──requires──> [2PC participant logic]
 
-IDMP-1 (Idempotent Operations)
-  └── required by SAGA-3 (Compensations)
-  └── required by SAGA-4 (Checkout Idempotency)
-  └── required by CRASH-1 (Recovery Retries)
-  └── required by DIFF-1 (Event-Driven at-least-once)
+[COMM_MODE env var toggle]
+    └──requires──> [Redis Streams request/reply messaging]
+                       └──requires──> [Correlation ID matching]
+                       └──requires──> [Reply timeout handling]
+                       └──requires──> [Consumer group per service]
 
-CONCUR-1 (Redis Atomicity)
-  └── required by SAGA-3 (Compensation correctness)
-  └── enables correct behavior under PERF-2 (concurrent gRPC calls)
-
-PERF-1 (Quart+Uvicorn)
-  └── required by PERF-2 (gRPC async)
-  └── required by DIFF-1 (async event consumption)
-
-PERF-2 (gRPC)
-  └── required by DIFF-3 (circuit breaker wraps gRPC)
-  └── required by DIFF-4 (tracing auto-instruments gRPC)
-
-CONSIST-1 (Redis Cluster)
-  └── depends on SAGA-1 (cluster stores SAGA state)
-  └── depends on CONCUR-1 (cluster-aware atomicity)
+[Unified test suite]
+    └──requires──> [TRANSACTION_MODE toggle]
+    └──requires──> [COMM_MODE toggle]
 ```
 
-**Critical path for Phase 1:** SAGA-1 → SAGA-2 → SAGA-3 → CRASH-1 → IDMP-1 → CONCUR-1 → PERF-1 → PERF-2 → CONSIST-1
+### Dependency Notes
+
+- **2PC coordinator requires participant logic:** Cannot complete PREPARE without participants that understand prepare/commit/abort. Both sides must be built together.
+- **Message queue requires correlation IDs:** Without correlation, concurrent requests produce unroutable replies. This is the foundational primitive.
+- **Env var toggles require both implementations:** The toggle is trivial (if/else dispatch), but both code paths must exist and be tested.
+- **Recovery scanner requires persistence:** Cannot recover what was not persisted. 2PC log must be written before recovery can read it.
+- **Test suites require toggles:** Parameterized tests exercise both modes through the same toggle mechanism.
 
 ---
 
-## Complexity Summary
+## How 2PC Works (Expected Behavior)
 
-| Feature | Category | Complexity | Phase |
-|---------|----------|------------|-------|
-| SAGA-1: Persistent SAGA State | Table Stakes | Medium | Phase 1 |
-| SAGA-2: SAGA Orchestrator | Table Stakes | High | Phase 1 (extract in Phase 2) |
-| SAGA-3: Compensating Transactions | Table Stakes | Medium-High | Phase 1 |
-| SAGA-4: Exactly-Once Checkout | Table Stakes | Medium | Phase 1 |
-| IDMP-1: Idempotent Operations | Table Stakes | Medium | Phase 1 |
-| CRASH-1: Crash Recovery on Startup | Table Stakes | Medium-High | Phase 1 |
-| CONCUR-1: Redis Read-Modify-Write Atomicity | Table Stakes | Low-Medium | Phase 1 |
-| PERF-1: Quart+Uvicorn Migration | Table Stakes | Medium | Phase 1 |
-| PERF-2: gRPC Inter-Service | Table Stakes | Medium-High | Phase 1 |
-| CONSIST-1: Redis Cluster | Table Stakes | Medium | Phase 1 |
-| DIFF-1: Event-Driven SAGA | Differentiator | High | Phase 1/2 |
-| DIFF-2: Outbox Pattern | Differentiator | Medium | Phase 2 |
-| DIFF-3: Circuit Breaker | Differentiator | Medium | Phase 1/2 |
-| DIFF-4: Distributed Tracing | Differentiator | Medium | Phase 2 |
-| DIFF-5: HPA Custom Metrics | Differentiator | Medium-High | Phase 2 |
-| DIFF-6: SAGA State Machine | Differentiator | Low | Phase 1 |
+### Protocol Phases
 
----
+**Phase 1 -- Prepare:**
+1. Coordinator creates 2PC transaction record in Redis (state: PREPARING)
+2. Coordinator sends PREPARE to all participants (Stock, Payment) with transaction details
+3. Each participant tentatively executes the operation (reserve stock, hold payment) WITHOUT finalizing
+4. Each participant persists its prepared state and votes YES or NO
+5. Coordinator collects all votes
 
-## What the Benchmark Actually Tests
+**Phase 2 -- Commit or Abort:**
+- If ALL votes are YES: coordinator logs COMMITTING decision, sends COMMIT to all participants, participants finalize tentative operations, coordinator logs COMMITTED
+- If ANY vote is NO (or timeout): coordinator logs ABORTING, sends ABORT to all participants, participants release tentative operations, coordinator logs ABORTED
 
-The locust benchmark and kill-container evaluation test specific behaviors that map directly to features:
+### Key Difference from SAGA
 
-| Test Scenario | Feature Required |
-|---------------|-----------------|
-| Concurrent checkouts for same item | CONCUR-1 |
-| Retry after timeout — no double charge | IDMP-1, SAGA-4 |
-| Kill order service mid-checkout | CRASH-1, SAGA-1 |
-| Kill stock service mid-checkout | SAGA-3 (compensation), CONSIST-1 |
-| Kill payment service after stock deducted | CRASH-1, SAGA-3 |
-| High throughput (locust, 20 CPUs) | PERF-1, PERF-2, CONSIST-1 |
-| Check consistency after recovery | SAGA-1 (all SAGAs resolved), CRASH-1 |
+| Aspect | SAGA (v1.0) | 2PC (v2.0) |
+|--------|-------------|------------|
+| Execution | Sequential: reserve stock, then charge payment | Parallel prepare: prepare stock AND prepare payment simultaneously |
+| Failure handling | Compensating transactions (undo what was done) | Abort (nothing was finalized, just release tentative holds) |
+| Atomicity guarantee | Eventual consistency via compensation | Strong consistency via all-or-nothing commit |
+| Blocking | Non-blocking (compensations run async) | Potentially blocking (participants wait for phase-2) |
+| Recovery complexity | Resume from any step, compensate backward | Simple: if COMMIT logged, replay commits; if not, abort |
 
-No test directly measures event-driven architecture, circuit breakers, or tracing. Those score Architecture Difficulty points in the interview, not consistency points in the benchmark.
+### Tentative Reservation Pattern for Redis
+
+Since Redis has no native prepare/commit, 2PC participants must implement tentative operations:
+
+**Stock PREPARE:** Write `{item:<id>}:tentative:{tx_id}` with reserved quantity. Do NOT decrement actual stock yet. Lua script atomically checks available stock (actual minus sum of tentative) and writes tentative record.
+
+**Stock COMMIT:** Atomically decrement actual stock AND delete tentative record. Lua script does both in one EVAL.
+
+**Stock ABORT:** Delete tentative record. Lua script removes the key.
+
+**Payment PREPARE/COMMIT/ABORT:** Same pattern with `{user:<id>}:tentative:{tx_id}`.
 
 ---
 
-*Research: 2026-02-27 — feeds into requirements definition for Phase 1 (due March 13)*
+## How Redis Streams Request/Reply Works (Expected Behavior)
+
+### Message Flow
+
+```
+Orchestrator                    Stock Service
+    |                               |
+    |-- XADD {stock:requests} -->   |
+    |   {correlation_id, action,    |
+    |    item_id, quantity, ...}     |
+    |                               |-- XREADGROUP (consumer group)
+    |                               |-- process request
+    |                               |-- XADD {stock:replies} -->
+    |                               |   {correlation_id, success, ...}
+    |<-- XREAD {stock:replies} --   |
+    |   (filter by correlation_id)  |
+```
+
+### Key Design Decisions
+
+**Request streams:** One per service type: `{stock:requests}`, `{payment:requests}`. Consumer groups distribute requests across service replicas.
+
+**Reply streams:** One per service type: `{stock:replies}`, `{payment:replies}`. Orchestrator polls with XREAD BLOCK, filtering by correlation ID.
+
+**Correlation ID:** `{order_id}:{step}` -- natural, unique, matches existing idempotency key pattern.
+
+**Timeout:** XREAD BLOCK with configurable timeout (e.g., 5 seconds, matching current `RPC_TIMEOUT`). Timeout = same handling as gRPC timeout.
+
+**Idempotency:** Same idempotency_key mechanism as gRPC path. Participant checks idempotency before processing, returns cached result if already processed.
+
+### Integration with `client.py`
+
+Current `client.py` has functions like `reserve_stock(item_id, quantity, idempotency_key)`. The interface stays identical. Under the hood:
+- `COMM_MODE=grpc`: call gRPC stub (current behavior)
+- `COMM_MODE=queue`: XADD to request stream, XREAD reply stream with correlation ID, parse response
+
+This keeps the SAGA and 2PC coordinators transport-agnostic.
+
+---
+
+## Existing v1.0 Components: Reuse Analysis
+
+| v1.0 Component | Reuse for 2PC | Reuse for Message Queues |
+|----------------|---------------|--------------------------|
+| `saga.py` Lua CAS transitions | YES -- same Lua pattern, different state names | NO |
+| `client.py` gRPC wrappers | PARTIAL -- need new RPCs for prepare/commit/abort | YES -- abstract same interface, swap transport |
+| `events.py` fire-and-forget | YES -- publish 2PC lifecycle events | NO |
+| `consumers.py` consumer groups | NO | YES -- same XREADGROUP/XAUTOCLAIM for request processing |
+| `recovery.py` startup scanner | YES -- extend for 2PC record scanning | NO |
+| `circuit.py` circuit breakers | YES -- wrap 2PC calls | YES -- wrap queue timeouts |
+| Stock/Payment Lua scripts | PARTIAL -- idempotency pattern reusable, need new tentative scripts | NO direct reuse |
+| Stock/Payment gRPC servicers | NO -- need new RPCs | YES -- handlers reusable, called from queue consumer |
+| Redis Cluster hash tags | YES -- `{2pc:<order_id>}` | YES -- `{stock:requests}` |
+
+---
+
+## MVP Definition
+
+### Build First: Core 2PC
+
+Minimum to demonstrate 2PC as alternative transaction pattern.
+
+- [ ] `twopc.py` -- 2PC state machine with Lua CAS transitions
+- [ ] Stock participant: PrepareReserve/CommitReserve/AbortReserve (Lua scripts for tentative reservation)
+- [ ] Payment participant: PrepareCharge/CommitCharge/AbortCharge (Lua scripts for tentative hold)
+- [ ] `run_2pc_checkout()` in orchestrator -- prepare all, then commit or abort
+- [ ] 2PC transaction log in Redis hash -- crash safety
+- [ ] `TRANSACTION_MODE` env var toggle
+- [ ] 2PC recovery scanner
+
+### Build Second: Message Queues
+
+Replace gRPC with Redis Streams request/reply.
+
+- [ ] Request/reply transport layer in `client.py` -- same function signatures, queue transport
+- [ ] Request stream per service (`{stock:requests}`, `{payment:requests}`)
+- [ ] Reply stream with correlation IDs (`{stock:replies}`, `{payment:replies}`)
+- [ ] Consumer loop in Stock/Payment reading request stream, dispatching to existing handlers
+- [ ] `COMM_MODE` env var toggle
+- [ ] Timeout and circuit breaker integration
+
+### Build Third: Validation
+
+Prove everything works under benchmark.
+
+- [ ] Parameterized integration tests (SAGA/2PC x gRPC/queue)
+- [ ] Kill-test in 2PC + queue mode
+- [ ] Benchmark with 0 consistency violations in all 4 mode combinations
+
+---
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| 2PC state machine + Lua CAS | HIGH | MEDIUM | P1 |
+| 2PC participant logic (Stock + Payment) | HIGH | HIGH | P1 |
+| 2PC coordinator flow | HIGH | MEDIUM | P1 |
+| 2PC transaction log persistence | HIGH | LOW | P1 |
+| 2PC recovery scanner | HIGH | MEDIUM | P1 |
+| TRANSACTION_MODE env var toggle | HIGH | LOW | P1 |
+| Redis Streams request/reply | HIGH | HIGH | P1 |
+| Correlation ID matching | HIGH | MEDIUM | P1 |
+| COMM_MODE env var toggle | HIGH | LOW | P1 |
+| Reply timeout handling | MEDIUM | LOW | P1 |
+| Consumer group per service | MEDIUM | LOW | P2 |
+| Unified test suite (4 combinations) | HIGH | LOW | P2 |
+| 2PC event publishing | LOW | LOW | P2 |
+| Presumed-abort optimization | LOW | LOW | P3 |
+| Dead letter queue for requests | LOW | LOW | P3 |
+
+**Priority key:**
+- P1: Must have for v2.0 milestone
+- P2: Should have, add when core is working
+- P3: Nice to have, defer if time is short
+
+---
+
+## Sources
+
+- [Martin Fowler - Two-Phase Commit](https://martinfowler.com/articles/patterns-of-distributed-systems/two-phase-commit.html) -- authoritative pattern description
+- [Two-Phase Commit Wikipedia](https://en.wikipedia.org/wiki/Two-phase_commit_protocol) -- protocol specification
+- [2PC in Microservices - DEV Community](https://dev.to/ovichowdhury/demystifying-two-phase-commit-2pc-for-distributed-transaction-in-microservices-5ca7) -- application-level implementation
+- [SAGA vs 2PC - GeeksforGeeks](https://www.geeksforgeeks.org/system-design/difference-between-saga-pattern-and-2-phase-commit-in-microservices/) -- pattern comparison
+- [Redis Streams Docs](https://redis.io/docs/latest/develop/data-types/streams/) -- official stream documentation
+- [Redis Blog: Sync and Async Communication](https://redis.io/blog/what-to-choose-for-your-synchronous-and-asynchronous-communication-needs-redis-streams-redis-pub-sub-kafka-etc-best-approaches-synchronous-asynchronous-communication/) -- Redis messaging patterns
+- [redis-py Async Examples](https://redis.readthedocs.io/en/stable/examples/asyncio_examples.html) -- async Redis Streams usage
+- [Redis Streams Wrong Assumptions](https://redis.io/blog/youre-probably-thinking-about-redis-streams-wrong/) -- stream entry structure clarification
+
+---
+*Feature research for: 2PC and Redis Streams message queues for distributed checkout*
+*Researched: 2026-03-12*
