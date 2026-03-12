@@ -49,6 +49,21 @@ class PaymentServiceStub(object):
                 request_serializer=payment__pb2.CheckPaymentRequest.SerializeToString,
                 response_deserializer=payment__pb2.CheckPaymentResponse.FromString,
                 _registered_method=True)
+        self.PreparePayment = channel.unary_unary(
+                '/payment.PaymentService/PreparePayment',
+                request_serializer=payment__pb2.PreparePaymentRequest.SerializeToString,
+                response_deserializer=payment__pb2.PaymentResponse.FromString,
+                _registered_method=True)
+        self.CommitPayment = channel.unary_unary(
+                '/payment.PaymentService/CommitPayment',
+                request_serializer=payment__pb2.CommitPaymentRequest.SerializeToString,
+                response_deserializer=payment__pb2.PaymentResponse.FromString,
+                _registered_method=True)
+        self.AbortPayment = channel.unary_unary(
+                '/payment.PaymentService/AbortPayment',
+                request_serializer=payment__pb2.AbortPaymentRequest.SerializeToString,
+                response_deserializer=payment__pb2.PaymentResponse.FromString,
+                _registered_method=True)
 
 
 class PaymentServiceServicer(object):
@@ -72,6 +87,24 @@ class PaymentServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PreparePayment(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CommitPayment(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AbortPayment(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PaymentServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -89,6 +122,21 @@ def add_PaymentServiceServicer_to_server(servicer, server):
                     servicer.CheckPayment,
                     request_deserializer=payment__pb2.CheckPaymentRequest.FromString,
                     response_serializer=payment__pb2.CheckPaymentResponse.SerializeToString,
+            ),
+            'PreparePayment': grpc.unary_unary_rpc_method_handler(
+                    servicer.PreparePayment,
+                    request_deserializer=payment__pb2.PreparePaymentRequest.FromString,
+                    response_serializer=payment__pb2.PaymentResponse.SerializeToString,
+            ),
+            'CommitPayment': grpc.unary_unary_rpc_method_handler(
+                    servicer.CommitPayment,
+                    request_deserializer=payment__pb2.CommitPaymentRequest.FromString,
+                    response_serializer=payment__pb2.PaymentResponse.SerializeToString,
+            ),
+            'AbortPayment': grpc.unary_unary_rpc_method_handler(
+                    servicer.AbortPayment,
+                    request_deserializer=payment__pb2.AbortPaymentRequest.FromString,
+                    response_serializer=payment__pb2.PaymentResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -172,6 +220,87 @@ class PaymentService(object):
             '/payment.PaymentService/CheckPayment',
             payment__pb2.CheckPaymentRequest.SerializeToString,
             payment__pb2.CheckPaymentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PreparePayment(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/payment.PaymentService/PreparePayment',
+            payment__pb2.PreparePaymentRequest.SerializeToString,
+            payment__pb2.PaymentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CommitPayment(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/payment.PaymentService/CommitPayment',
+            payment__pb2.CommitPaymentRequest.SerializeToString,
+            payment__pb2.PaymentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AbortPayment(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/payment.PaymentService/AbortPayment',
+            payment__pb2.AbortPaymentRequest.SerializeToString,
+            payment__pb2.PaymentResponse.FromString,
             options,
             channel_credentials,
             insecure,

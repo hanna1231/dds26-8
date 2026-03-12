@@ -49,6 +49,21 @@ class StockServiceStub(object):
                 request_serializer=stock__pb2.CheckStockRequest.SerializeToString,
                 response_deserializer=stock__pb2.CheckStockResponse.FromString,
                 _registered_method=True)
+        self.PrepareStock = channel.unary_unary(
+                '/stock.StockService/PrepareStock',
+                request_serializer=stock__pb2.PrepareStockRequest.SerializeToString,
+                response_deserializer=stock__pb2.StockResponse.FromString,
+                _registered_method=True)
+        self.CommitStock = channel.unary_unary(
+                '/stock.StockService/CommitStock',
+                request_serializer=stock__pb2.CommitStockRequest.SerializeToString,
+                response_deserializer=stock__pb2.StockResponse.FromString,
+                _registered_method=True)
+        self.AbortStock = channel.unary_unary(
+                '/stock.StockService/AbortStock',
+                request_serializer=stock__pb2.AbortStockRequest.SerializeToString,
+                response_deserializer=stock__pb2.StockResponse.FromString,
+                _registered_method=True)
 
 
 class StockServiceServicer(object):
@@ -72,6 +87,24 @@ class StockServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PrepareStock(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CommitStock(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AbortStock(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_StockServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -89,6 +122,21 @@ def add_StockServiceServicer_to_server(servicer, server):
                     servicer.CheckStock,
                     request_deserializer=stock__pb2.CheckStockRequest.FromString,
                     response_serializer=stock__pb2.CheckStockResponse.SerializeToString,
+            ),
+            'PrepareStock': grpc.unary_unary_rpc_method_handler(
+                    servicer.PrepareStock,
+                    request_deserializer=stock__pb2.PrepareStockRequest.FromString,
+                    response_serializer=stock__pb2.StockResponse.SerializeToString,
+            ),
+            'CommitStock': grpc.unary_unary_rpc_method_handler(
+                    servicer.CommitStock,
+                    request_deserializer=stock__pb2.CommitStockRequest.FromString,
+                    response_serializer=stock__pb2.StockResponse.SerializeToString,
+            ),
+            'AbortStock': grpc.unary_unary_rpc_method_handler(
+                    servicer.AbortStock,
+                    request_deserializer=stock__pb2.AbortStockRequest.FromString,
+                    response_serializer=stock__pb2.StockResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -172,6 +220,87 @@ class StockService(object):
             '/stock.StockService/CheckStock',
             stock__pb2.CheckStockRequest.SerializeToString,
             stock__pb2.CheckStockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PrepareStock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stock.StockService/PrepareStock',
+            stock__pb2.PrepareStockRequest.SerializeToString,
+            stock__pb2.StockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CommitStock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stock.StockService/CommitStock',
+            stock__pb2.CommitStockRequest.SerializeToString,
+            stock__pb2.StockResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AbortStock(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stock.StockService/AbortStock',
+            stock__pb2.AbortStockRequest.SerializeToString,
+            stock__pb2.StockResponse.FromString,
             options,
             channel_credentials,
             insecure,

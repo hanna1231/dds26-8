@@ -28,6 +28,24 @@ class PaymentServiceServicer(PaymentServiceServicerBase):
             credit=result["credit"]
         )
 
+    async def PreparePayment(self, request, context):
+        result = await operations.prepare_payment(
+            self.db, request.user_id, request.amount, request.order_id
+        )
+        return PaymentResponse(success=result["success"], error_message=result["error_message"])
+
+    async def CommitPayment(self, request, context):
+        result = await operations.commit_payment(
+            self.db, request.user_id, request.order_id
+        )
+        return PaymentResponse(success=result["success"], error_message=result["error_message"])
+
+    async def AbortPayment(self, request, context):
+        result = await operations.abort_payment(
+            self.db, request.user_id, request.order_id
+        )
+        return PaymentResponse(success=result["success"], error_message=result["error_message"])
+
 
 _grpc_server: grpc.aio.Server = None
 

@@ -30,6 +30,15 @@ COMMAND_DISPATCH = {
     "check_stock": lambda db, p: operations.check_stock(
         db, p["item_id"],
     ),
+    "prepare_stock": lambda db, p: operations.prepare_stock(
+        db, p["item_id"], int(p["quantity"]), p["order_id"],
+    ),
+    "commit_stock": lambda db, p: operations.commit_stock(
+        db, p["item_id"], p["order_id"],
+    ),
+    "abort_stock": lambda db, p: operations.abort_stock(
+        db, p["item_id"], p["order_id"],
+    ),
 }
 
 
