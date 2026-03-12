@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
 status: completed
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-03-12T08:28:36.691Z"
-last_activity: 2026-03-12 -- Completed 09-02 domain queue consumers
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-12T08:51:33.000Z"
+last_activity: 2026-03-12 -- Completed 10-01 transport adapter
 progress:
   total_phases: 6
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 9 - Queue Infrastructure
+**Current focus:** Phase 10 - Transport Adapter
 
 ## Current Position
 
-Phase: 9 of 13 (Queue Infrastructure)
-Plan: 2 of 2 in current phase
+Phase: 10 of 13 (Transport Adapter)
+Plan: 1 of 1 in current phase
 Status: completed
-Last activity: 2026-03-12 -- Completed 09-02 domain queue consumers
+Last activity: 2026-03-12 -- Completed 10-01 transport adapter
 
 Progress: [██████████] 100%
 
@@ -54,6 +54,7 @@ Progress: [██████████] 100%
 | Phase 08 P02 | 4min | 2 tasks | 4 files |
 | Phase 09 P01 | 2min | 2 tasks | 2 files |
 | Phase 09 P02 | 2min | 2 tasks | 3 files |
+| Phase 10 P01 | 2min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Recent decisions affecting current work:
 - [Phase 09]: Single shared reply stream with consumer group for all service replies
 - [09-02]: Separate db and queue_db parameters on consumers for future multi-Redis deployment
 - [09-02]: Defensive int() casting on quantity/amount in COMMAND_DISPATCH lambdas
+- [10-01]: Transport adapter re-exports domain functions only; init/close handled directly in app.py
+- [10-01]: COMM_MODE read at import time; tests use sys.modules cache clearing
 
 ### Pending Todos
 
@@ -83,6 +86,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T08:24:16Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-03-12T08:51:33Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None
