@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
 status: completed
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-03-12T07:21:37.125Z"
-last_activity: 2026-03-12 -- Completed 08-02 payment business logic extraction
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-03-12T07:21:00.000Z"
+last_activity: 2026-03-12 -- Completed 08-01 stock business logic extraction
 progress:
   total_phases: 6
   completed_phases: 1
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 Phase: 8 of 13 (Business Logic Extraction)
 Plan: 2 of 2 in current phase
 Status: Phase 8 complete
-Last activity: 2026-03-12 -- Completed 08-02 payment business logic extraction
+Last activity: 2026-03-12 -- Completed 08-01 stock business logic extraction
 
-Progress: [██████████] 96%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [██████████] 96%
 - Trend: --
 
 *Updated after each plan completion*
+| Phase 08 P01 | 4min | 2 tasks | 3 files |
 | Phase 08 P02 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
@@ -63,6 +64,8 @@ Recent decisions affecting current work:
 - [Roadmap]: Business logic extraction is prerequisite for both queue consumers and 2PC participants
 - [08-02]: Return plain dicts from operations functions for transport independence
 - [08-02]: Clear operations module from sys.modules in conftest to avoid cross-service cache collision
+- [08-01]: Return plain dicts from stock operations functions for transport independence
+- [08-01]: Preserve all CAS loops and Lua scripts exactly during extraction
 
 ### Pending Todos
 
@@ -74,6 +77,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T07:21:37.123Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-03-12T07:21:00.000Z
+Stopped at: Completed 08-01-PLAN.md
 Resume file: None
