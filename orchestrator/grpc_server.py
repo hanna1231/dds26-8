@@ -27,7 +27,7 @@ from saga import (
     get_saga,
     set_saga_error,
 )
-from client import reserve_stock, release_stock, charge_payment, refund_payment
+from transport import reserve_stock, release_stock, charge_payment, refund_payment
 from events import publish_event
 
 

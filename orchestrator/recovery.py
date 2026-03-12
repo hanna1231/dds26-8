@@ -21,7 +21,8 @@ async def resume_saga(db, saga: dict) -> None:
     CircuitBreakerError during recovery triggers compensation.
     """
     from grpc_server import run_compensation
-    from client import reserve_stock, charge_payment, CircuitBreakerError
+    from transport import reserve_stock, charge_payment
+    from circuitbreaker import CircuitBreakerError
     from saga import transition_state, get_saga
 
     order_id = saga["order_id"]
