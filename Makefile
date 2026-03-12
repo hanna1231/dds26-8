@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-cluster dev-down dev-logs dev-build dev-clean test dev-status benchmark stress-init stress-test kill-test kill-test-all
+.PHONY: dev-up dev-cluster dev-down dev-logs dev-build dev-clean test dev-status benchmark stress-init stress-test kill-test kill-test-all test-all-modes kill-test-all-modes benchmark-all-modes
 
 # Start simplified topology (single shared 6-node Redis cluster) — fast local dev
 dev-up: dev-build
@@ -91,3 +91,78 @@ kill-test:
 # Run kill-container tests for all services sequentially (manages cluster lifecycle internally)
 kill-test-all:
 	python scripts/kill_test.py --all
+
+# Run Docker integration tests in all 4 mode combinations
+test-all-modes:
+	@for tp in saga 2pc; do \
+		for cm in grpc queue; do \
+			echo "\n=== Mode: TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm ==="; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple down -v --remove-orphans 2>/dev/null; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple up -d --build; \
+			sleep 20; \
+			cd test && python -m pytest test_microservices.py -v && cd .. || { cd ..; echo "FAILED: $$tp/$$cm"; exit 1; }; \
+		done; \
+	done
+	@echo "\nAll 4 modes passed!"
+
+# Run kill-tests in all 4 mode combinations
+kill-test-all-modes:
+	@for tp in saga 2pc; do \
+		for cm in grpc queue; do \
+			echo "\n=== Kill-test: TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm ==="; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple down -v --remove-orphans 2>/dev/null; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple up -d --build; \
+			sleep 20; \
+			python scripts/kill_test.py --all || { echo "FAILED: $$tp/$$cm"; exit 1; }; \
+		done; \
+	done
+	@echo "\nAll kill-tests passed!"
+
+# Run benchmark in all 4 mode combinations
+benchmark-all-modes:
+	@for tp in saga 2pc; do \
+		for cm in grpc queue; do \
+			echo "\n=== Benchmark: TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm ==="; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple down -v --remove-orphans 2>/dev/null; \
+			TRANSACTION_PATTERN=$$tp COMM_MODE=$$cm \
+			SAGA_STALENESS_SECONDS=10 \
+			ORDER_REDIS_HOST=shared-redis-0 \
+			STOCK_REDIS_HOST=shared-redis-0 \
+			PAYMENT_REDIS_HOST=shared-redis-0 \
+			ORCH_REDIS_HOST=shared-redis-0 \
+			docker compose --profile simple up -d --build; \
+			sleep 20; \
+			$(MAKE) benchmark || { echo "FAILED: $$tp/$$cm"; exit 1; }; \
+		done; \
+	done
+	@echo "\nAll benchmarks passed!"
