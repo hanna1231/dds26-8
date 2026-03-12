@@ -120,11 +120,11 @@ Plans:
   1. All existing integration tests pass in all 4 mode combinations (SAGA/gRPC, SAGA/queue, 2PC/gRPC, 2PC/queue)
   2. Kill-test produces 0 consistency violations (no lost money or items) in 2PC mode
   3. wdm-project-benchmark passes with 0 consistency violations in all 4 modes
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 13-01: TBD
-- [ ] 13-02: TBD
+- [ ] 13-01-PLAN.md — Wire queue consumers in stock/payment, add docker-compose env vars and multi-mode Makefile targets
+- [ ] 13-02-PLAN.md — Run 4-mode integration tests, kill-tests, and benchmark validation
 
 ## Progress
 
@@ -146,4 +146,4 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | 2/2 | Complete    | 2026-03-12 | - |
 | 12. 2PC Coordinator & Recovery | 2/2 | Complete    | 2026-03-12 | - |
-| 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
+| 13. Integration & Benchmark | v2.0 | 0/2 | Not started | - |
