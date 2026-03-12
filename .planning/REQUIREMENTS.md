@@ -1,7 +1,7 @@
 # Requirements: DDS26-8 Distributed Checkout System
 
 **Defined:** 2026-03-12
-**Core Value:** Checkout transactions must never lose money or item counts — consistency is non-negotiable, even when containers crash mid-transaction.
+**Core Value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
 
 ## v2.0 Requirements
 
@@ -32,7 +32,7 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 
 ### Integration & Testing
 
-- [ ] **INT-01**: All 4 mode combinations (SAGA/2PC × gRPC/queue) pass integration tests
+- [ ] **INT-01**: All 4 mode combinations (SAGA/2PC x gRPC/queue) pass integration tests
 - [ ] **INT-02**: Kill-test consistency for 2PC mode (no lost money/items after recovery)
 - [ ] **INT-03**: Benchmark passes with 0 consistency violations in all modes
 
@@ -64,29 +64,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BLE-01 | — | Pending |
-| BLE-02 | — | Pending |
-| TPC-01 | — | Pending |
-| TPC-02 | — | Pending |
-| TPC-03 | — | Pending |
-| TPC-04 | — | Pending |
-| TPC-05 | — | Pending |
-| TPC-06 | — | Pending |
-| TPC-07 | — | Pending |
-| MQC-01 | — | Pending |
-| MQC-02 | — | Pending |
-| MQC-03 | — | Pending |
-| MQC-04 | — | Pending |
-| MQC-05 | — | Pending |
-| INT-01 | — | Pending |
-| INT-02 | — | Pending |
-| INT-03 | — | Pending |
+| BLE-01 | Phase 8 | Pending |
+| BLE-02 | Phase 8 | Pending |
+| TPC-01 | Phase 11 | Pending |
+| TPC-02 | Phase 11 | Pending |
+| TPC-03 | Phase 11 | Pending |
+| TPC-04 | Phase 12 | Pending |
+| TPC-05 | Phase 12 | Pending |
+| TPC-06 | Phase 12 | Pending |
+| TPC-07 | Phase 12 | Pending |
+| MQC-01 | Phase 9 | Pending |
+| MQC-02 | Phase 9 | Pending |
+| MQC-03 | Phase 9 | Pending |
+| MQC-04 | Phase 10 | Pending |
+| MQC-05 | Phase 10 | Pending |
+| INT-01 | Phase 13 | Pending |
+| INT-02 | Phase 13 | Pending |
+| INT-03 | Phase 13 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17 ⚠️
+- Mapped to phases: 17
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-12*
-*Last updated: 2026-03-12 after initial definition*
+*Last updated: 2026-03-12 after roadmap creation*
