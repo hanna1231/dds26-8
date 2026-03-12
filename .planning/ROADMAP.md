@@ -32,7 +32,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [ ] **Phase 8: Business Logic Extraction** - Extract Stock and Payment business logic from gRPC servicers into shared operations modules
 - [x] **Phase 9: Queue Infrastructure** - Build Redis Streams request/reply messaging with consumer groups and correlation ID routing (completed 2026-03-12)
-- [ ] **Phase 10: Transport Adapter** - Create transport abstraction enabling transparent gRPC/queue swap with COMM_MODE toggle
+- [x] **Phase 10: Transport Adapter** - Create transport abstraction enabling transparent gRPC/queue swap with COMM_MODE toggle (completed 2026-03-12)
 - [ ] **Phase 11: 2PC State Machine & Participants** - Build 2PC state machine and tentative reservation Lua scripts for Stock and Payment
 - [ ] **Phase 12: 2PC Coordinator & Recovery** - Implement 2PC coordinator flow, WAL pattern, recovery scanner, and TRANSACTION_PATTERN toggle
 - [ ] **Phase 13: Integration & Benchmark** - Validate all 4 mode combinations with integration tests, kill-tests, and benchmark
@@ -76,7 +76,7 @@ Plans:
   1. Setting `COMM_MODE=grpc` uses gRPC transport; setting `COMM_MODE=queue` uses Redis Streams transport -- no other code changes needed
   2. SAGA coordinator calls transport adapter functions with identical signatures regardless of mode
   3. Full integration test suite passes in both SAGA+gRPC and SAGA+queue modes
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 10-01-PLAN.md — Transport adapter with COMM_MODE toggle and caller updates
@@ -143,7 +143,7 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 7. Validation and Delivery | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
-| 10. Transport Adapter | v2.0 | 0/1 | Not started | - |
+| 10. Transport Adapter | 1/1 | Complete   | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | v2.0 | 0/? | Not started | - |
 | 12. 2PC Coordinator & Recovery | v2.0 | 0/? | Not started | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
