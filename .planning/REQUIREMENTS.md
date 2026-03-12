@@ -32,9 +32,9 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 
 ### Integration & Testing
 
-- [ ] **INT-01**: All 4 mode combinations (SAGA/2PC x gRPC/queue) pass integration tests
-- [ ] **INT-02**: Kill-test consistency for 2PC mode (no lost money/items after recovery)
-- [ ] **INT-03**: Benchmark passes with 0 consistency violations in all modes
+- [x] **INT-01**: All 4 mode combinations (SAGA/2PC x gRPC/queue) pass integration tests
+- [x] **INT-02**: Kill-test consistency for 2PC mode (no lost money/items after recovery)
+- [x] **INT-03**: Benchmark passes with 0 consistency violations in all modes
 
 ## Future Requirements
 
@@ -78,9 +78,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MQC-03 | Phase 9 | Complete |
 | MQC-04 | Phase 10 | Complete |
 | MQC-05 | Phase 10 | Complete |
-| INT-01 | Phase 13 | Pending |
-| INT-02 | Phase 13 | Pending |
-| INT-03 | Phase 13 | Pending |
+| INT-01 | Phase 13 | Complete |
+| INT-02 | Phase 13 | Complete |
+| INT-03 | Phase 13 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 17 total

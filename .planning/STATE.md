@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
-status: completed
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-03-12T11:01:12.057Z"
-last_activity: 2026-03-12 -- Completed 12-02 2PC coordinator, recovery, and toggle
+status: in-progress
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-12T11:47:22Z"
+last_activity: 2026-03-12 -- Completed 13-01 integration wiring (queue consumers, docker-compose, Makefile)
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 11
+  completed_plans: 10
   percent: 100
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-12)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 12 - 2PC Coordinator & Recovery
+**Current focus:** Phase 13 - Integration & Benchmark Validation
 
 ## Current Position
 
-Phase: 12 of 13 (2PC Coordinator & Recovery)
-Plan: 2 of 2 in current phase (COMPLETE)
-Status: phase-complete
-Last activity: 2026-03-12 -- Completed 12-02 2PC coordinator, recovery, and toggle
+Phase: 13 of 13 (Integration & Benchmark Validation)
+Plan: 1 of 2 in current phase (13-01 complete)
+Status: in-progress
+Last activity: 2026-03-12 -- Completed 13-01 integration wiring (queue consumers, docker-compose, Makefile)
 
-Progress: [██████████] 100%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [██████████] 100%
 | Phase 11 P02 | 4min | 3 tasks | 3 files |
 | Phase 12 P01 | 3min | 2 tasks | 17 files |
 | Phase 12 P02 | 5min | 2 tasks | 4 files |
+| Phase 13 P01 | 2min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ Recent decisions affecting current work:
 - [12-02]: WAL pattern persists COMMITTING/ABORTING before sending phase-2 messages
 - [12-02]: Presumed abort for INIT and PREPARING states in recovery
 - [12-02]: Patch transport module (not recovery) for lazy-import mock targets
+- [13-01]: Pass db for both db and queue_db params since simple mode shares single Redis cluster
+- [13-01]: Add COMM_MODE to stock, payment, and orchestrator; TRANSACTION_PATTERN only to orchestrator
 
 ### Pending Todos
 
@@ -98,6 +101,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T10:56:19Z
-Stopped at: Completed 12-02-PLAN.md
+Last session: 2026-03-12T11:47:22Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
