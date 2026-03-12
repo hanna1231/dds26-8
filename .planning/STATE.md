@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
 status: in-progress
-stopped_at: Completed 12-01-PLAN.md
+stopped_at: Completed 12-02-PLAN.md
 last_updated: "2026-03-12T10:49:00.000Z"
 last_activity: 2026-03-12 -- Completed 12-01 2PC transport layer
 progress:
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 12 of 13 (2PC Coordinator & Recovery)
-Plan: 1 of 2 in current phase
-Status: in-progress
-Last activity: 2026-03-12 -- Completed 12-01 2PC transport layer
+Plan: 2 of 2 in current phase (COMPLETE)
+Status: phase-complete
+Last activity: 2026-03-12 -- Completed 12-02 2PC coordinator, recovery, and toggle
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [██████████] 97%
 | Phase 11 P01 | 2min | 2 tasks | 3 files |
 | Phase 11 P02 | 4min | 3 tasks | 3 files |
 | Phase 12 P01 | 3min | 2 tasks | 17 files |
+| Phase 12 P02 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,9 @@ Recent decisions affecting current work:
 - [11-02]: Hold key stores quantity/amount as string; idempotency via hold key EXISTS check
 - [11-02]: COMMIT always idempotent (DEL on missing key is no-op); ABORT returns success when hold key gone
 - [12-01]: 2PC transport wrappers use order_id (not idempotency_key) matching operations.py signatures
+- [12-02]: WAL pattern persists COMMITTING/ABORTING before sending phase-2 messages
+- [12-02]: Presumed abort for INIT and PREPARING states in recovery
+- [12-02]: Patch transport module (not recovery) for lazy-import mock targets
 
 ### Pending Todos
 
@@ -94,6 +98,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T10:49:00Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-03-12T10:56:19Z
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None

@@ -18,8 +18,8 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 - [x] **TPC-02**: Stock service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
 - [x] **TPC-03**: Payment service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
 - [x] **TPC-04**: Orchestrator acts as 2PC coordinator with concurrent participant prepare via asyncio.gather
-- [ ] **TPC-05**: Coordinator persists decision to Redis before sending phase-2 messages (WAL pattern)
-- [ ] **TPC-06**: Recovery scanner handles 2PC transactions using protocol field in records
+- [x] **TPC-05**: Coordinator persists decision to Redis before sending phase-2 messages (WAL pattern)
+- [x] **TPC-06**: Recovery scanner handles 2PC transactions using protocol field in records
 - [x] **TPC-07**: TRANSACTION_PATTERN env var toggles between SAGA and 2PC
 
 ### Message Queue Communication
@@ -70,8 +70,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TPC-02 | Phase 11 | Complete |
 | TPC-03 | Phase 11 | Complete |
 | TPC-04 | Phase 12 | Complete |
-| TPC-05 | Phase 12 | Pending |
-| TPC-06 | Phase 12 | Pending |
+| TPC-05 | Phase 12 | Complete |
+| TPC-06 | Phase 12 | Complete |
 | TPC-07 | Phase 12 | Complete |
 | MQC-01 | Phase 9 | Complete |
 | MQC-02 | Phase 9 | Complete |

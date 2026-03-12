@@ -34,7 +34,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 9: Queue Infrastructure** - Build Redis Streams request/reply messaging with consumer groups and correlation ID routing (completed 2026-03-12)
 - [x] **Phase 10: Transport Adapter** - Create transport abstraction enabling transparent gRPC/queue swap with COMM_MODE toggle (completed 2026-03-12)
 - [x] **Phase 11: 2PC State Machine & Participants** - Build 2PC state machine and tentative reservation Lua scripts for Stock and Payment (completed 2026-03-12)
-- [ ] **Phase 12: 2PC Coordinator & Recovery** - Implement 2PC coordinator flow, WAL pattern, recovery scanner, and TRANSACTION_PATTERN toggle
+- [x] **Phase 12: 2PC Coordinator & Recovery** - Implement 2PC coordinator flow, WAL pattern, recovery scanner, and TRANSACTION_PATTERN toggle (completed 2026-03-12)
 - [ ] **Phase 13: Integration & Benchmark** - Validate all 4 mode combinations with integration tests, kill-tests, and benchmark
 
 ## Phase Details
@@ -106,7 +106,7 @@ Plans:
   3. Recovery scanner distinguishes SAGA and 2PC transactions by protocol field and applies correct recovery logic
   4. Setting `TRANSACTION_PATTERN=saga` uses SAGA; setting `TRANSACTION_PATTERN=2pc` uses 2PC -- no other code changes needed
   5. 2PC+gRPC checkout completes end-to-end; 2PC+queue checkout completes end-to-end
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 12-01-PLAN.md — Extend transport layer with 2PC RPCs, servicers, client wrappers, queue dispatch, and transport adapter
@@ -145,5 +145,5 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | 2/2 | Complete    | 2026-03-12 | - |
-| 12. 2PC Coordinator & Recovery | 1/2 | In Progress|  | - |
+| 12. 2PC Coordinator & Recovery | 2/2 | Complete   | 2026-03-12 | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
