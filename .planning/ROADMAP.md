@@ -47,11 +47,11 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   1. Stock service gRPC servicer delegates all business logic to `operations.py` functions -- no Lua scripts or Redis calls remain in the servicer
   2. Payment service gRPC servicer delegates all business logic to `operations.py` functions -- no Lua scripts or Redis calls remain in the servicer
   3. All existing integration tests pass unchanged (zero behavior change)
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
+- [ ] 08-01-PLAN.md — Extract Stock business logic into operations.py
+- [ ] 08-02-PLAN.md — Extract Payment business logic into operations.py
 
 ### Phase 9: Queue Infrastructure
 **Goal**: Redis Streams request/reply messaging works end-to-end between orchestrator and domain services
@@ -141,7 +141,7 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 5. Event-Driven Architecture | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 6. Infrastructure | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 7. Validation and Delivery | v1.0 | 3/3 | Complete | 2026-03-01 |
-| 8. Business Logic Extraction | v2.0 | 0/? | Not started | - |
+| 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
 | 9. Queue Infrastructure | v2.0 | 0/? | Not started | - |
 | 10. Transport Adapter | v2.0 | 0/? | Not started | - |
 | 11. 2PC State Machine & Participants | v2.0 | 0/? | Not started | - |
