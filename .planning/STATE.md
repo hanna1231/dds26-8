@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: 2PC & Message Queues
 status: completed
-stopped_at: Completed 09-01-PLAN.md
+stopped_at: Completed 09-02-PLAN.md
 last_updated: "2026-03-12T08:20:25.738Z"
 last_activity: 2026-03-12 -- Completed 08-01 stock business logic extraction
 progress:
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 9 of 13 (Queue Infrastructure)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-03-12 -- Completed 09-01 queue client and reply listener
+Plan: 2 of 2 in current phase
+Status: completed
+Last activity: 2026-03-12 -- Completed 09-02 domain queue consumers
 
-Progress: [██████████] 96%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██████████] 96%
 | Phase 08 P01 | 4min | 2 tasks | 3 files |
 | Phase 08 P02 | 4min | 2 tasks | 4 files |
 | Phase 09 P01 | 2min | 2 tasks | 2 files |
+| Phase 09 P02 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Recent decisions affecting current work:
 - [08-01]: Preserve all CAS loops and Lua scripts exactly during extraction
 - [Phase 09]: STREAM_MAXLEN 1000 for command/reply streams (smaller than saga events)
 - [Phase 09]: Single shared reply stream with consumer group for all service replies
+- [09-02]: Separate db and queue_db parameters on consumers for future multi-Redis deployment
+- [09-02]: Defensive int() casting on quantity/amount in COMMAND_DISPATCH lambdas
 
 ### Pending Todos
 
@@ -80,6 +83,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T08:20:25.736Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-03-12T08:24:16Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None
