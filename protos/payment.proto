@@ -5,6 +5,9 @@ service PaymentService {
   rpc ChargePayment(ChargePaymentRequest) returns (PaymentResponse);
   rpc RefundPayment(RefundPaymentRequest) returns (PaymentResponse);
   rpc CheckPayment(CheckPaymentRequest) returns (CheckPaymentResponse);
+  rpc PreparePayment(PreparePaymentRequest) returns (PaymentResponse);
+  rpc CommitPayment(CommitPaymentRequest) returns (PaymentResponse);
+  rpc AbortPayment(AbortPaymentRequest) returns (PaymentResponse);
 }
 
 message ChargePaymentRequest {
@@ -26,6 +29,22 @@ message CheckPaymentRequest {
 message PaymentResponse {
   bool success = 1;
   string error_message = 2;
+}
+
+message PreparePaymentRequest {
+  string user_id = 1;
+  int32 amount = 2;
+  string order_id = 3;
+}
+
+message CommitPaymentRequest {
+  string user_id = 1;
+  string order_id = 2;
+}
+
+message AbortPaymentRequest {
+  string user_id = 1;
+  string order_id = 2;
 }
 
 message CheckPaymentResponse {

@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rpayment.proto\x12\x07payment\"P\n\x14\x43hargePaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x05\x12\x17\n\x0fidempotency_key\x18\x03 \x01(\t\"P\n\x14RefundPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x05\x12\x17\n\x0fidempotency_key\x18\x03 \x01(\t\"&\n\x13\x43heckPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\"9\n\x0fPaymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"N\n\x14\x43heckPaymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x0e\n\x06\x63redit\x18\x03 \x01(\x05\x32\xf1\x01\n\x0ePaymentService\x12H\n\rChargePayment\x12\x1d.payment.ChargePaymentRequest\x1a\x18.payment.PaymentResponse\x12H\n\rRefundPayment\x12\x1d.payment.RefundPaymentRequest\x1a\x18.payment.PaymentResponse\x12K\n\x0c\x43heckPayment\x12\x1c.payment.CheckPaymentRequest\x1a\x1d.payment.CheckPaymentResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rpayment.proto\x12\x07payment\"P\n\x14\x43hargePaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x05\x12\x17\n\x0fidempotency_key\x18\x03 \x01(\t\"P\n\x14RefundPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x05\x12\x17\n\x0fidempotency_key\x18\x03 \x01(\t\"&\n\x13\x43heckPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\"9\n\x0fPaymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"J\n\x15PreparePaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x05\x12\x10\n\x08order_id\x18\x03 \x01(\t\"9\n\x14\x43ommitPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x10\n\x08order_id\x18\x02 \x01(\t\"8\n\x13\x41\x62ortPaymentRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x10\n\x08order_id\x18\x02 \x01(\t\"N\n\x14\x43heckPaymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\x12\x0e\n\x06\x63redit\x18\x03 \x01(\x05\x32\xcf\x03\n\x0ePaymentService\x12H\n\rChargePayment\x12\x1d.payment.ChargePaymentRequest\x1a\x18.payment.PaymentResponse\x12H\n\rRefundPayment\x12\x1d.payment.RefundPaymentRequest\x1a\x18.payment.PaymentResponse\x12K\n\x0c\x43heckPayment\x12\x1c.payment.CheckPaymentRequest\x1a\x1d.payment.CheckPaymentResponse\x12J\n\x0ePreparePayment\x12\x1e.payment.PreparePaymentRequest\x1a\x18.payment.PaymentResponse\x12H\n\rCommitPayment\x12\x1d.payment.CommitPaymentRequest\x1a\x18.payment.PaymentResponse\x12\x46\n\x0c\x41\x62ortPayment\x12\x1c.payment.AbortPaymentRequest\x1a\x18.payment.PaymentResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -39,8 +39,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CHECKPAYMENTREQUEST']._serialized_end=228
   _globals['_PAYMENTRESPONSE']._serialized_start=230
   _globals['_PAYMENTRESPONSE']._serialized_end=287
-  _globals['_CHECKPAYMENTRESPONSE']._serialized_start=289
-  _globals['_CHECKPAYMENTRESPONSE']._serialized_end=367
-  _globals['_PAYMENTSERVICE']._serialized_start=370
-  _globals['_PAYMENTSERVICE']._serialized_end=611
+  _globals['_PREPAREPAYMENTREQUEST']._serialized_start=289
+  _globals['_PREPAREPAYMENTREQUEST']._serialized_end=363
+  _globals['_COMMITPAYMENTREQUEST']._serialized_start=365
+  _globals['_COMMITPAYMENTREQUEST']._serialized_end=422
+  _globals['_ABORTPAYMENTREQUEST']._serialized_start=424
+  _globals['_ABORTPAYMENTREQUEST']._serialized_end=480
+  _globals['_CHECKPAYMENTRESPONSE']._serialized_start=482
+  _globals['_CHECKPAYMENTRESPONSE']._serialized_end=560
+  _globals['_PAYMENTSERVICE']._serialized_start=563
+  _globals['_PAYMENTSERVICE']._serialized_end=1026
 # @@protoc_insertion_point(module_scope)

@@ -28,6 +28,24 @@ class StockServiceServicer(StockServiceServicerBase):
             stock=result["stock"], price=result["price"]
         )
 
+    async def PrepareStock(self, request, context):
+        result = await operations.prepare_stock(
+            self.db, request.item_id, request.quantity, request.order_id
+        )
+        return StockResponse(success=result["success"], error_message=result["error_message"])
+
+    async def CommitStock(self, request, context):
+        result = await operations.commit_stock(
+            self.db, request.item_id, request.order_id
+        )
+        return StockResponse(success=result["success"], error_message=result["error_message"])
+
+    async def AbortStock(self, request, context):
+        result = await operations.abort_stock(
+            self.db, request.item_id, request.order_id
+        )
+        return StockResponse(success=result["success"], error_message=result["error_message"])
+
 
 _grpc_server: grpc.aio.Server = None
 

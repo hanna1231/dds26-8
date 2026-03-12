@@ -5,6 +5,9 @@ service StockService {
   rpc ReserveStock(ReserveStockRequest) returns (StockResponse);
   rpc ReleaseStock(ReleaseStockRequest) returns (StockResponse);
   rpc CheckStock(CheckStockRequest) returns (CheckStockResponse);
+  rpc PrepareStock(PrepareStockRequest) returns (StockResponse);
+  rpc CommitStock(CommitStockRequest) returns (StockResponse);
+  rpc AbortStock(AbortStockRequest) returns (StockResponse);
 }
 
 message ReserveStockRequest {
@@ -26,6 +29,22 @@ message CheckStockRequest {
 message StockResponse {
   bool success = 1;
   string error_message = 2;
+}
+
+message PrepareStockRequest {
+  string item_id = 1;
+  int32 quantity = 2;
+  string order_id = 3;
+}
+
+message CommitStockRequest {
+  string item_id = 1;
+  string order_id = 2;
+}
+
+message AbortStockRequest {
+  string item_id = 1;
+  string order_id = 2;
 }
 
 message CheckStockResponse {

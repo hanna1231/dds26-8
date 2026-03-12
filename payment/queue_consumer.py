@@ -30,6 +30,15 @@ COMMAND_DISPATCH = {
     "check_payment": lambda db, p: operations.check_payment(
         db, p["user_id"],
     ),
+    "prepare_payment": lambda db, p: operations.prepare_payment(
+        db, p["user_id"], int(p["amount"]), p["order_id"],
+    ),
+    "commit_payment": lambda db, p: operations.commit_payment(
+        db, p["user_id"], p["order_id"],
+    ),
+    "abort_payment": lambda db, p: operations.abort_payment(
+        db, p["user_id"], p["order_id"],
+    ),
 }
 
 
