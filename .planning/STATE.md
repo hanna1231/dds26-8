@@ -4,14 +4,14 @@ milestone: v2.0
 milestone_name: 2PC & Message Queues
 status: in-progress
 stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-03-12T10:15:22Z"
+last_updated: "2026-03-12T10:17:23.448Z"
 last_activity: 2026-03-12 -- Completed 11-01 2PC state machine
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 7
-  completed_plans: 6
-  percent: 100
+  completed_plans: 7
+  percent: 96
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-12)
 ## Current Position
 
 Phase: 11 of 13 (2PC State Machine & Participants)
-Plan: 1 of 2 in current phase
-Status: in-progress
-Last activity: 2026-03-12 -- Completed 11-01 2PC state machine
+Plan: 2 of 2 in current phase
+Status: completed
+Last activity: 2026-03-12 -- Completed 11-02 2PC participants
 
-Progress: [██████████] 96%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [██████████] 96%
 | Phase 09 P02 | 2min | 2 tasks | 3 files |
 | Phase 10 P01 | 2min | 2 tasks | 5 files |
 | Phase 11 P01 | 2min | 2 tasks | 3 files |
+| Phase 11 P02 | 4min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,8 @@ Recent decisions affecting current work:
 - [10-01]: COMM_MODE read at import time; tests use sys.modules cache clearing
 - [11-01]: Reuse Redis db=3 for TPC and SAGA records (different key prefixes {tpc:} vs {saga:})
 - [11-01]: Mirror saga.py pattern exactly for TPC state machine (same Lua CAS, same API shape)
+- [11-02]: Hold key stores quantity/amount as string; idempotency via hold key EXISTS check
+- [11-02]: COMMIT always idempotent (DEL on missing key is no-op); ABORT returns success when hold key gone
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-12T10:12:37Z
-Stopped at: Completed 11-01-PLAN.md
+Last session: 2026-03-12T10:16:38Z
+Stopped at: Completed 11-02-PLAN.md
 Resume file: None

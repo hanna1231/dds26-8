@@ -15,8 +15,8 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 ### Two-Phase Commit
 
 - [x] **TPC-01**: 2PC state machine with states INIT→PREPARING→COMMITTING/ABORTING→COMMITTED/ABORTED using Lua CAS transitions
-- [ ] **TPC-02**: Stock service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
-- [ ] **TPC-03**: Payment service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
+- [x] **TPC-02**: Stock service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
+- [x] **TPC-03**: Payment service tentative reservation Lua scripts (prepare reserves, commit finalizes, abort releases)
 - [ ] **TPC-04**: Orchestrator acts as 2PC coordinator with concurrent participant prepare via asyncio.gather
 - [ ] **TPC-05**: Coordinator persists decision to Redis before sending phase-2 messages (WAL pattern)
 - [ ] **TPC-06**: Recovery scanner handles 2PC transactions using protocol field in records
@@ -67,8 +67,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BLE-01 | Phase 8 | Complete |
 | BLE-02 | Phase 8 | Complete |
 | TPC-01 | Phase 11 | Complete |
-| TPC-02 | Phase 11 | Pending |
-| TPC-03 | Phase 11 | Pending |
+| TPC-02 | Phase 11 | Complete |
+| TPC-03 | Phase 11 | Complete |
 | TPC-04 | Phase 12 | Pending |
 | TPC-05 | Phase 12 | Pending |
 | TPC-06 | Phase 12 | Pending |
