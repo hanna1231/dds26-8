@@ -24,8 +24,8 @@ Requirements for v2.0 milestone. Each maps to roadmap phases.
 
 ### Message Queue Communication
 
-- [ ] **MQC-01**: Redis Streams command streams per service with consumer group processing
-- [ ] **MQC-02**: Shared reply stream with correlation ID routing and asyncio.Future resolution
+- [x] **MQC-01**: Redis Streams command streams per service with consumer group processing
+- [x] **MQC-02**: Shared reply stream with correlation ID routing and asyncio.Future resolution
 - [ ] **MQC-03**: Queue consumer workers in Stock and Payment services dispatching to operations modules
 - [ ] **MQC-04**: Transport adapter abstraction enabling gRPC/queue swap transparently
 - [ ] **MQC-05**: COMM_MODE env var toggles between gRPC and queue communication
@@ -73,8 +73,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TPC-05 | Phase 12 | Pending |
 | TPC-06 | Phase 12 | Pending |
 | TPC-07 | Phase 12 | Pending |
-| MQC-01 | Phase 9 | Pending |
-| MQC-02 | Phase 9 | Pending |
+| MQC-01 | Phase 9 | Complete |
+| MQC-02 | Phase 9 | Complete |
 | MQC-03 | Phase 9 | Pending |
 | MQC-04 | Phase 10 | Pending |
 | MQC-05 | Phase 10 | Pending |
