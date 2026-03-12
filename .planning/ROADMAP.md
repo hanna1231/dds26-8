@@ -90,11 +90,11 @@ Plans:
   2. Stock PREPARE atomically reserves all items in an order; COMMIT finalizes; ABORT releases -- partial prepare is impossible
   3. Payment PREPARE atomically reserves funds; COMMIT finalizes; ABORT releases
   4. All 2PC Lua scripts preserve idempotency (duplicate PREPARE/COMMIT/ABORT calls are safe)
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 11-01: TBD
-- [ ] 11-02: TBD
+- [ ] 11-01-PLAN.md — 2PC state machine (tpc.py) with Lua CAS transitions and tests
+- [ ] 11-02-PLAN.md — Stock and Payment 2PC participant operations (prepare/commit/abort)
 
 ### Phase 12: 2PC Coordinator & Recovery
 **Goal**: Orchestrator can execute checkout via 2PC with crash recovery, switchable with SAGA via env var
@@ -144,6 +144,6 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
-| 11. 2PC State Machine & Participants | v2.0 | 0/? | Not started | - |
+| 11. 2PC State Machine & Participants | v2.0 | 0/2 | Not started | - |
 | 12. 2PC Coordinator & Recovery | v2.0 | 0/? | Not started | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
