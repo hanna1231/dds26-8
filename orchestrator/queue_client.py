@@ -87,6 +87,22 @@ async def check_stock(item_id: str) -> dict:
                               {"item_id": item_id})
 
 
+async def prepare_stock(item_id: str, quantity: int, order_id: str) -> dict:
+    return await send_command(STOCK_COMMAND_STREAM, "prepare_stock",
+                              {"item_id": item_id, "quantity": quantity,
+                               "order_id": order_id})
+
+
+async def commit_stock(item_id: str, order_id: str) -> dict:
+    return await send_command(STOCK_COMMAND_STREAM, "commit_stock",
+                              {"item_id": item_id, "order_id": order_id})
+
+
+async def abort_stock(item_id: str, order_id: str) -> dict:
+    return await send_command(STOCK_COMMAND_STREAM, "abort_stock",
+                              {"item_id": item_id, "order_id": order_id})
+
+
 # ---------------------------------------------------------------------------
 # Payment wrappers (signatures match client.py exactly)
 # ---------------------------------------------------------------------------
@@ -108,3 +124,19 @@ async def refund_payment(user_id: str, amount: int,
 async def check_payment(user_id: str) -> dict:
     return await send_command(PAYMENT_COMMAND_STREAM, "check_payment",
                               {"user_id": user_id})
+
+
+async def prepare_payment(user_id: str, amount: int, order_id: str) -> dict:
+    return await send_command(PAYMENT_COMMAND_STREAM, "prepare_payment",
+                              {"user_id": user_id, "amount": amount,
+                               "order_id": order_id})
+
+
+async def commit_payment(user_id: str, order_id: str) -> dict:
+    return await send_command(PAYMENT_COMMAND_STREAM, "commit_payment",
+                              {"user_id": user_id, "order_id": order_id})
+
+
+async def abort_payment(user_id: str, order_id: str) -> dict:
+    return await send_command(PAYMENT_COMMAND_STREAM, "abort_payment",
+                              {"user_id": user_id, "order_id": order_id})

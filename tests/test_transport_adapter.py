@@ -25,6 +25,8 @@ if _orchestrator_path not in sys.path:
 DOMAIN_FUNCTIONS = [
     "reserve_stock", "release_stock", "check_stock",
     "charge_payment", "refund_payment", "check_payment",
+    "prepare_stock", "commit_stock", "abort_stock",
+    "prepare_payment", "commit_payment", "abort_payment",
 ]
 
 
