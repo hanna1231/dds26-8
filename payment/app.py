@@ -6,9 +6,10 @@ import redis.asyncio as redis
 import redis.exceptions
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 
-from msgspec import msgpack, Struct
+from msgspec import msgpack
 from quart import Quart, jsonify, abort, Response
 from grpc_server import serve_grpc, stop_grpc_server
+from operations import UserValue
 
 DB_ERROR_STR = "DB error"
 
@@ -37,10 +38,6 @@ async def startup():
 async def shutdown():
     await stop_grpc_server()
     await db.aclose()
-
-
-class UserValue(Struct):
-    credit: int
 
 
 async def get_user_from_db(user_id: str) -> UserValue | None:
