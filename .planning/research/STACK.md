@@ -1,541 +1,270 @@
-# Stack Research — Distributed Microservice Checkout System
+# Technology Stack
 
-**Research Date:** 2026-02-27
-**Research Type:** Project Research — Stack dimension
-**Milestone:** Subsequent — upgrading Flask+Redis to Quart+Uvicorn+gRPC+Redis Cluster
-
----
-
-> **Version Verification Note:** Web search and PyPI API access were unavailable during this research session. Versions below are from training data (cutoff August 2025). Before pinning in requirements.txt, verify each version against `pip index versions <package>` or PyPI. Confidence in specific patch versions is lower than confidence in major.minor versions and architectural recommendations.
+**Project:** DDS26-8 v2.0 — 2PC & Message Queues
+**Researched:** 2026-03-12
+**Scope:** Stack additions/changes for 2PC transaction coordination and Redis Streams request/reply inter-service messaging
 
 ---
 
-## Summary Recommendation
+## Key Finding: Zero New Dependencies
 
-For a Python-only distributed checkout system on Kubernetes with consistency guarantees and a March 13 deadline, the optimal stack is:
+The existing stack already provides everything needed for v2.0. Both 2PC coordination and Redis Streams request/reply messaging are **application-level patterns** built on top of the same `redis[hiredis]` and `msgspec` libraries already in use. No new PyPI packages, no new infrastructure components, no new proto definitions required for the core features.
 
-- **Quart 0.20.x + Uvicorn 0.30.x** — async Flask-compatible migration path, minimal code rewrite
-- **grpcio 1.65.x + grpcio-tools 1.65.x** — inter-service calls, lower latency than REST
-- **redis-py 5.x async client** — already in use; enable async mode, add cluster support
-- **Redis Streams** over Kafka — simpler ops, no new infrastructure, Redis already required
-- **Redis Cluster** — 3-node minimum with AOF persistence for HA
-
----
-
-## 1. Web Framework: Quart + Uvicorn
-
-### Chosen: Quart 0.20.x
-
-**Package:** `quart`
-**Version:** `>=0.20.0,<0.21` (verify: `pip index versions quart`)
-**Confidence:** High (architectural choice) / Medium (exact minor version)
-
-**Why Quart over alternatives:**
-
-| Option | Verdict | Reason |
-|--------|---------|--------|
-| Quart | **Use** | Drop-in async Flask replacement; Flask 3.x patterns translate directly; existing routes, blueprints, abort() calls migrate with minimal changes |
-| FastAPI | Avoid | Pydantic-heavy; more suited to greenfield; migration from Flask is higher friction than Quart; adds complexity for a time-constrained project |
-| Starlette (raw) | Avoid | Too low-level; no Flask compatibility; would require full rewrite |
-| Flask + gevent/eventlet | Avoid | Fake async via monkey-patching; breaks under gRPC; not true async I/O |
-| aiohttp | Avoid | Different API paradigm entirely; not Flask-compatible |
-
-**Migration notes:** `@app.route` becomes `@app.route` (identical). `request`, `jsonify`, `abort()` all work unchanged. The key difference is route handlers become `async def` and Redis calls must be `await`ed.
-
-### Chosen: Uvicorn 0.30.x
-
-**Package:** `uvicorn[standard]`
-**Version:** `>=0.30.0,<0.31` (verify: `pip index versions uvicorn`)
-**Confidence:** High
-
-**Why Uvicorn over Hypercorn:**
-
-| Option | Verdict | Reason |
-|--------|---------|--------|
-| Uvicorn | **Use** | Best performance for ASGI; uvloop + httptools acceleration via `[standard]` extra; industry standard for Quart/FastAPI production |
-| Hypercorn | Avoid | Quart's "official" server but benchmarks consistently lower throughput than Uvicorn; Quart works with either |
-| Gunicorn (WSGI) | Remove | WSGI cannot serve ASGI; must be replaced entirely |
-
-**Gunicorn in K8s:** Gunicorn can be used as a process manager wrapping Uvicorn workers (`gunicorn -k uvicorn.workers.UvicornWorker`), which is a valid production pattern. However for simplicity with K8s HPA and CPU-based autoscaling, running Uvicorn directly with `--workers` is recommended: `uvicorn app:app --workers 4 --host 0.0.0.0 --port 5000`.
-
-**Worker count guidance:** Start at `2 * CPU_cores + 1`. With 1 CPU per pod (current K8s limit), use 3 workers. Adjust after benchmarking.
+This is the correct outcome because:
+1. **2PC over Redis** is a coordination protocol implemented via Redis hashes + Lua CAS — the same primitives already used for SAGA state machines in `saga.py`
+2. **Redis Streams request/reply** uses XADD/XREADGROUP — the same Redis Streams API already used for SAGA events in `events.py` and `consumers.py`
+3. **Message serialization** for stream payloads uses `msgspec.json` — already a dependency in all services
 
 ---
 
-## 2. gRPC: grpcio + grpcio-tools
+## Existing Stack (No Version Changes Needed)
 
-### Chosen: grpcio 1.65.x + grpcio-tools 1.65.x
-
-**Packages:** `grpcio`, `grpcio-tools`
-**Version:** `>=1.65.0,<2.0` (verify: `pip index versions grpcio`)
-**Confidence:** High (library is stable, async support mature since 1.32)
-
-**Why gRPC:**
-- Binary Protocol Buffers serialization is ~5-10x smaller than JSON for the same payload
-- HTTP/2 multiplexing means multiple in-flight RPCs over one connection vs. one request per connection (HTTP/1.1)
-- Strongly typed `.proto` contracts eliminate the "what does this endpoint accept?" ambiguity between services
-- Streaming support available for future SAGA event flows
-- The alternative (httpx async REST) loses the type safety and stays at JSON overhead
-
-**What NOT to use:**
-- `grpc.aio` is the correct async module — do NOT use the legacy synchronous `grpc` stub in async handlers (blocks event loop)
-- Do not use `grpclib` (third-party) — grpcio's native `grpc.aio` is now mature and better supported
-- Do not mix sync and async stubs in the same service
-
-### Proto File Structure for Order/Stock/Payment Services
-
-Create a shared `proto/` directory at the repo root, compiled once:
-
-```
-proto/
-  checkout.proto       # SAGA orchestration messages
-  order_service.proto  # Order service RPCs
-  stock_service.proto  # Stock service RPCs
-  payment_service.proto # Payment service RPCs
-```
-
-**stock_service.proto** (example — most called service during checkout):
-```protobuf
-syntax = "proto3";
-
-package checkout;
-
-service StockService {
-  rpc FindItem (FindItemRequest) returns (ItemResponse);
-  rpc SubtractStock (AdjustStockRequest) returns (OperationResponse);
-  rpc AddStock (AdjustStockRequest) returns (OperationResponse);
-}
-
-message FindItemRequest {
-  string item_id = 1;
-}
-
-message ItemResponse {
-  string item_id = 1;
-  int64 stock = 2;
-  int64 price = 3;
-  bool found = 4;
-}
-
-message AdjustStockRequest {
-  string item_id = 1;
-  int64 quantity = 2;
-  string idempotency_key = 3;  // Required for SAGA compensation safety
-}
-
-message OperationResponse {
-  bool success = 1;
-  string error_message = 2;
-  string idempotency_key = 3;
-}
-```
-
-**payment_service.proto**:
-```protobuf
-syntax = "proto3";
-
-package checkout;
-
-service PaymentService {
-  rpc FindUser (FindUserRequest) returns (UserResponse);
-  rpc Pay (PayRequest) returns (OperationResponse);
-  rpc AddFunds (AddFundsRequest) returns (OperationResponse);
-}
-
-message FindUserRequest {
-  string user_id = 1;
-}
-
-message UserResponse {
-  string user_id = 1;
-  int64 credit = 2;
-  bool found = 3;
-}
-
-message PayRequest {
-  string user_id = 1;
-  int64 amount = 2;
-  string idempotency_key = 3;
-}
-
-message AddFundsRequest {
-  string user_id = 1;
-  int64 amount = 2;
-}
-
-message OperationResponse {
-  bool success = 1;
-  string error_message = 2;
-  string idempotency_key = 3;
-}
-```
-
-**checkout.proto** (SAGA coordination — used by orchestrator):
-```protobuf
-syntax = "proto3";
-
-package checkout;
-
-service SagaOrchestrator {
-  rpc StartCheckout (CheckoutRequest) returns (CheckoutResponse);
-  rpc GetSagaStatus (SagaStatusRequest) returns (SagaStatusResponse);
-}
-
-message CheckoutRequest {
-  string order_id = 1;
-  string saga_id = 2;   // UUID, idempotency at orchestrator level
-}
-
-message CheckoutResponse {
-  bool success = 1;
-  string saga_id = 2;
-  string error_message = 3;
-}
-
-message SagaStatusRequest {
-  string saga_id = 1;
-}
-
-message SagaStatusResponse {
-  string saga_id = 1;
-  string state = 2;  // PENDING, PROCESSING, COMPLETED, COMPENSATING, FAILED
-  bool is_terminal = 3;
-}
-```
-
-**idempotency_key** field is critical in all mutation RPCs. Without it, a compensating transaction that retries cannot distinguish "already compensated" from "not yet compensated," leading to double-compensation bugs.
-
-**Code generation:**
-```bash
-python -m grpc_tools.protoc \
-  -I./proto \
-  --python_out=./generated \
-  --grpc_python_out=./generated \
-  proto/*.proto
-```
-
-Run this in Dockerfile build step or as a Makefile target. Generated files should be committed to the repo to avoid build-time protoc dependency in containers.
-
-**Async server setup pattern (per service):**
-```python
-import grpc
-from grpc import aio as grpc_aio
-
-async def serve():
-    server = grpc_aio.server()
-    stock_service_pb2_grpc.add_StockServiceServicer_to_server(StockServicer(), server)
-    server.add_insecure_port('[::]:50051')
-    await server.start()
-    await server.wait_for_termination()
-```
-
-Each service runs both the Quart HTTP server (for external API, port 5000) and gRPC server (for inter-service, port 50051) in the same process using `asyncio.gather()`.
+| Technology | Version | Current Use (v1.0) | v2.0 Additional Use |
+|------------|---------|---------------------|---------------------|
+| redis[hiredis] | 5.0.3 | SAGA state (HSET/HGET), Lua CAS transitions, XADD events, XREADGROUP consumers | 2PC coordinator state (same hash+Lua pattern), request/reply streams (same XADD/XREADGROUP) |
+| msgspec | 0.18.6 | msgpack for Stock/Payment data, JSON for event payloads | JSON serialization for stream request/reply message envelopes |
+| quart | 0.20.0 | HTTP API servers, `app.add_background_task` for consumers | No change — stream consumer tasks use same background task mechanism |
+| uvicorn | 0.34.0 | ASGI server | No change |
+| grpcio | 1.78.0 | Inter-service RPC (Stock, Payment, Orchestrator) | Kept as fallback communication path behind `COMM_MODE` env var |
+| protobuf | >=6.31.1 | gRPC message definitions | No change — not used for stream messages |
+| circuitbreaker | 2.1.3 | Circuit breakers on gRPC calls in `client.py` | Reuse same decorator on stream-based call functions |
+| httpx | 0.27.0 | Order service -> Orchestrator HTTP calls | No change |
 
 ---
 
-## 3. Redis: Async Client + Cluster
+## What NOT to Add
 
-### Chosen: redis-py 5.x async client
+| Rejected Addition | Why Not |
+|-------------------|---------|
+| **Kafka / RabbitMQ / NATS** | Redis Streams already deployed on 3 clusters. Adding a message broker blows the 20 CPU budget and adds operational complexity for zero benefit. The existing `consumers.py` already proves Redis Streams consumer groups work. |
+| **celery / dramatiq / arq** | Task queue abstractions add layers over Redis Streams with no value. We need raw stream control for request/reply correlation, not job dispatch. |
+| **aioredis** (standalone) | Deprecated; `redis.asyncio` (in redis-py 5.x) is the successor and already in use across all services. |
+| **redis-om / walrus** | ORM abstractions over Redis. The codebase already uses raw redis-py with Lua scripts for atomicity. An ORM would fight existing patterns. |
+| **New .proto definitions for 2PC** | 2PC communication goes over Redis Streams, not gRPC. Existing gRPC protos stay unchanged as the fallback path. Adding 2PC-specific protos would couple the transport to the transaction pattern. |
+| **Distributed lock library (redlock-py, pottery)** | 2PC uses Lua CAS on coordinator state (same pattern as SAGA's `TRANSITION_LUA`), not distributed locks. Locks add complexity and deadlock risk. |
+| **uuid7 / ulid** | Python stdlib `uuid.uuid4()` is sufficient for correlation IDs. Stream message IDs are auto-generated by Redis (`*`). |
+| **tenacity** | Already rejected in v1.0 in favor of hand-rolled `retry_forever` and `retry_forward` in `grpc_server.py`. These are simple, well-tested, and carry over to stream-based calls unchanged. |
+| **structlog** | Nice-to-have but out of scope for v2.0. The existing `logging` stdlib usage is consistent across the codebase and sufficient. |
 
-**Package:** `redis`
-**Version:** `>=5.0.0,<6.0` (already installed at 5.0.3; verify: `pip index versions redis`)
-**Confidence:** High — already in use; async mode is built-in since 4.2
+---
 
-**Key change from current usage:** The existing code uses `redis.Redis` (synchronous). Switch to `redis.asyncio.Redis` (or `redis.asyncio.RedisCluster` for cluster). This is the same package, different import path — no version change needed.
+## Implementation Patterns Using Existing Stack
+
+### 2PC State Machine (Mirrors SAGA Pattern)
+
+Uses the identical Redis primitives as `saga.py`:
+
+- **Redis Hash** for 2PC coordinator record: `{2pc:<order_id>}` with fields `state`, `participants`, `votes`, `updated_at`
+- **Lua CAS script** for atomic state transitions (same pattern as `TRANSITION_LUA` in `saga.py`)
+- **States:** `INIT -> PREPARING -> COMMITTING -> COMMITTED` and `INIT -> PREPARING -> ABORTING -> ABORTED`
+- **Participant vote tracking** via hash fields: `vote:stock`, `vote:payment` set atomically in Lua
 
 ```python
-# Current (synchronous — blocks event loop in Quart):
-import redis
-db = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD)
+# 2PC states and transitions — structurally identical to saga.py
+TPC_STATES = {"INIT", "PREPARING", "COMMITTING", "COMMITTED", "ABORTING", "ABORTED"}
 
-# Target (async — correct for Quart):
-import redis.asyncio as aioredis
-db = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD)
+TPC_VALID_TRANSITIONS = {
+    "INIT": {"PREPARING"},
+    "PREPARING": {"COMMITTING", "ABORTING"},  # All YES -> COMMITTING, any NO/timeout -> ABORTING
+    "COMMITTING": {"COMMITTED"},
+    "ABORTING": {"ABORTED"},
+}
 
-# For Redis Cluster:
-db = aioredis.RedisCluster(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    password=REDIS_PASSWORD,
-    decode_responses=False,  # Keep binary for msgspec
-    skip_full_coverage_check=True,  # Safe for non-production clusters
-)
+# Same Lua CAS pattern as TRANSITION_LUA:
+TPC_TRANSITION_LUA = """
+local current = redis.call('HGET', KEYS[1], 'state')
+if current ~= ARGV[1] then return 0 end
+redis.call('HSET', KEYS[1], 'state', ARGV[2])
+redis.call('HSET', KEYS[1], 'updated_at', tostring(math.floor(redis.call('TIME')[1])))
+if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], ARGV[3], ARGV[4]) end
+return 1
+"""
 ```
 
-**What NOT to use:**
-- `aioredis` (standalone package) — deprecated and merged into redis-py 4.2+; do not install separately
-- Synchronous `redis.Redis` inside async handlers — will block the event loop, defeating Quart's async benefit
-- `redis.StrictRedis` — legacy alias, use `redis.asyncio.Redis` directly
+No new library needed — this is a state machine over Redis hashes with Lua atomicity, exactly like the existing SAGA implementation.
 
-**Connection pool configuration:**
+### Redis Streams Request/Reply Pattern
+
+Uses the same Redis Streams API already exercised in `events.py` and `consumers.py`:
+
+```
+Orchestrator                       Stock/Payment Service
+    |                                       |
+    |-- XADD {svc:requests} -------------->|  (request with correlation_id)
+    |                                       |-- XREADGROUP (consumer loop)
+    |                                       |-- dispatch to business logic
+    |<-- XADD {svc:replies:<corr_id>} -----|  (reply on per-correlation stream)
+    |-- XREAD BLOCK on reply stream         |
+    |   (timeout = RPC_TIMEOUT)             |
+```
+
+**Key primitives (all in redis-py 5.0.3, all already used in the codebase):**
+
+| Primitive | Already Used In | v2.0 Use |
+|-----------|----------------|----------|
+| `XADD` | `events.py:publish_event()` | Publish request messages, publish reply messages |
+| `XREADGROUP` | `consumers.py:compensation_consumer()` | Service-side consumer loop for incoming requests |
+| `XREAD` with `BLOCK` | (new usage) | Orchestrator waits for reply on per-correlation stream |
+| `XACK` | `consumers.py` (both consumers) | Acknowledge processed request messages |
+| `XAUTOCLAIM` | `consumers.py:compensation_consumer()` | Reclaim stale request messages on crash recovery |
+| `XGROUP CREATE` | `consumers.py:setup_consumer_groups()` | Create consumer groups on request streams |
+
+**Message envelope** (serialized with `msgspec.json`, already a dependency):
+
 ```python
-pool = aioredis.ConnectionPool.from_url(
-    f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
-    max_connections=50,  # Per worker; tune based on load test results
+# Request message fields (XADD)
+{
+    "correlation_id": "<uuid4>",           # Links request to reply
+    "action": "reserve_stock",             # Operation name (maps to gRPC RPC name)
+    "payload": '{"item_id":"x","qty":2}',  # JSON-encoded request body
+    "idempotency_key": "...",              # Same keys as gRPC path
+    "timestamp": "1710234567",
+}
+
+# Reply message fields (XADD)
+{
+    "correlation_id": "<uuid4>",           # Same as request
+    "success": "true",                     # String "true"/"false"
+    "payload": '{"error_message":""}',     # JSON-encoded response body
+    "timestamp": "1710234568",
+}
+```
+
+**Reply stream strategy:** Use per-correlation ephemeral streams (`{svc:replies:<correlation_id>}`) that auto-expire. The orchestrator does `XREAD BLOCK 5000` on this stream, then deletes it after reading the reply. This avoids the complexity of filtering a shared reply stream by correlation ID.
+
+```python
+# Orchestrator side (replacing a gRPC call):
+reply_stream = f"{{stock:replies:{correlation_id}}}"
+await stock_db.xadd("{stock:requests}", {
+    "correlation_id": correlation_id,
+    "action": "reserve_stock",
+    "payload": msgspec.json.encode(request_data).decode(),
+    "idempotency_key": ikey,
+})
+# Block-wait for reply (replaces grpc timeout=RPC_TIMEOUT)
+response = await stock_db.xread({reply_stream: "0-0"}, block=5000, count=1)
+await stock_db.delete(reply_stream)  # cleanup ephemeral stream
+```
+
+### Environment Variable Toggles
+
+Two new env vars control runtime behavior (stdlib `os.environ.get()`):
+
+| Env Var | Values | Default | Controls |
+|---------|--------|---------|----------|
+| `TRANSACTION_MODE` | `saga` / `2pc` | `saga` | Which transaction coordinator runs the checkout |
+| `COMM_MODE` | `queue` / `grpc` | `queue` | Whether inter-service calls use Redis Streams or gRPC |
+
+The orchestrator's `client.py` module becomes a facade that dispatches to either gRPC stubs or stream-based request/reply based on `COMM_MODE`. Read once at import time.
+
+### Stream Names (Redis Cluster Hash Tag Compatibility)
+
+All stream names use hash tags for Redis Cluster slot routing (same pattern as existing `{saga:events}:checkout`):
+
+| Stream | Purpose | Lives On |
+|--------|---------|----------|
+| `{stock:requests}` | Orchestrator -> Stock requests | Stock Redis Cluster |
+| `{stock:replies:<corr_id>}` | Stock -> Orchestrator replies | Stock Redis Cluster |
+| `{payment:requests}` | Orchestrator -> Payment requests | Payment Redis Cluster |
+| `{payment:replies:<corr_id>}` | Payment -> Orchestrator replies | Payment Redis Cluster |
+
+**Critical architecture constraint:** Request and reply streams for a domain MUST live on that domain's Redis Cluster (co-located with domain data). The orchestrator therefore needs Redis connections to all domain clusters — not just its own SAGA/2PC state cluster.
+
+### Orchestrator Multi-Cluster Connections
+
+The orchestrator currently connects to one Redis Cluster (its own, for SAGA state). For stream-based communication, it needs connections to domain clusters:
+
+```python
+# orchestrator/app.py — startup additions
+stock_db = RedisCluster(
+    startup_nodes=[ClusterNode(os.environ['STOCK_REDIS_HOST'], ...)],
+    password=os.environ['REDIS_PASSWORD'],
     decode_responses=False,
 )
-db = aioredis.Redis(connection_pool=pool)
-```
-
-### Redis Cluster Configuration
-
-**Minimum cluster topology:** 3 primary nodes, 3 replica nodes (1 replica per primary). Redis Cluster requires a minimum of 3 primaries to function.
-
-**For the benchmark (20 CPU constraint):** Each Redis Cluster node is a separate container. Keep cluster nodes at 3 primaries + 3 replicas = 6 Redis containers. With the 3 app services + nginx + SAGA orchestrator + 6 Redis = 10 containers minimum.
-
-**Recommended cluster layout:**
-
-```yaml
-# One cluster per service domain (Order, Stock, Payment each get their own cluster)
-# Each cluster: 3 primaries + 3 replicas
-
-order-redis-0: primary, 6379
-order-redis-1: primary, 6380
-order-redis-2: primary, 6381
-order-redis-3: replica of 0
-order-redis-4: replica of 1
-order-redis-5: replica of 2
-```
-
-**Alternative (simpler for time constraints):** Single Redis Cluster shared across services, with keyspace prefixes to isolate data. Simpler to operate but couples service data. Given the course's consistency focus, per-service clusters are architecturally cleaner.
-
-**Redis Cluster config (redis.conf per node):**
-```conf
-cluster-enabled yes
-cluster-config-file nodes.conf
-cluster-node-timeout 5000
-appendonly yes                    # AOF persistence — required for crash recovery
-appendfsync everysec              # Balance between durability and performance
-auto-aof-rewrite-percentage 100
-auto-aof-rewrite-min-size 64mb
-maxmemory-policy noeviction       # Never evict; crash rather than lose data silently
-```
-
-**Critical:** `maxmemory-policy noeviction` is non-negotiable for a financial system. Default `allkeys-lru` would silently delete order/payment records under memory pressure.
-
-**SAGA state persistence:** SAGA state (what step each transaction is at) must also persist in Redis with AOF. Use a dedicated key namespace: `saga:{saga_id}:state`. If the orchestrator crashes, on restart it reads all `saga:*:state` keys, finds incomplete SAGAs, and resumes compensation.
-
----
-
-## 4. Message Queue: Kafka vs Redis Streams
-
-### Decision: Redis Streams
-
-**Confidence:** High for this specific use case
-
-### Comparison Matrix
-
-| Dimension | Kafka | Redis Streams |
-|-----------|-------|---------------|
-| Infrastructure overhead | High — needs ZooKeeper/KRaft + brokers + topics + consumer groups | None — Redis already required; Streams is a Redis data type |
-| Ops complexity | High — separate cluster, JVM tuning, partition management | Low — same Redis you already operate |
-| CPU/Memory budget | High — Kafka broker alone: 2-4 GB RAM, 1-2 CPUs | None additional — Streams data lives in existing Redis |
-| Throughput ceiling | Millions of msg/sec | ~100k-1M msg/sec (sufficient for checkout workload) |
-| Message ordering | Partition-level ordering | Per-stream ordering (global per stream) |
-| Consumer groups | Yes | Yes (since Redis 5.0) — identical semantic model |
-| Exactly-once delivery | With transactions + idempotent producers | At-least-once; idempotency must be in application |
-| Schema registry | Confluent Schema Registry (separate service) | Not built-in; use msgspec/protobuf at application layer |
-| Persistence | Highly durable (replicated log) | Redis persistence (AOF) provides durability |
-| Learning curve | High | Low — Redis XADD/XREAD/XACK are simple |
-| Python client maturity | aiokafka (async), confluent-kafka (sync) | redis-py 5.x built-in — already installed |
-| Time to integrate | 3-5 days (new infra + learning) | 0.5-1 day (same client, new API calls) |
-| Relevance to grade | Event-driven architecture scores same regardless of broker | Same architectural category |
-
-### Why Redis Streams wins for this project:
-
-1. **Zero new infrastructure.** The benchmark runs against 20 CPUs. Every CPU used by Kafka is a CPU not available for checkout throughput. Redis Streams uses CPUs already allocated to Redis.
-
-2. **Already have the client.** redis-py 5.x includes full Streams support (`XADD`, `XREAD`, `XREADGROUP`, `XACK`, `XPENDING`). No new dependency, no version conflicts.
-
-3. **Consumer groups exist.** Redis Streams consumer groups give exactly the same at-least-once delivery semantics as Kafka consumer groups. The programming model is nearly identical.
-
-4. **Deadline pressure.** March 13 is 2 weeks away. Kafka would consume 3-5 days of setup and debugging. Redis Streams can be integrated in under a day for someone already familiar with Redis.
-
-5. **SAGA state is already in Redis.** Having the event stream co-located with the SAGA state allows atomic `MULTI/EXEC` operations like "append event AND update SAGA state" — impossible across Redis + Kafka.
-
-### When Kafka would win instead:
-- If the project required event replay across months of history
-- If multiple external consumers needed to subscribe (analytics, audit, external systems)
-- If throughput exceeded 500k events/second
-- If the team had existing Kafka expertise
-
-None of these apply here.
-
-### Redis Streams implementation pattern for SAGA:
-
-```python
-# Publish SAGA event (from orchestrator):
-await db.xadd(
-    "saga:events",
-    {
-        "saga_id": saga_id,
-        "event_type": "STOCK_SUBTRACTED",
-        "order_id": order_id,
-        "item_id": item_id,
-        "quantity": str(quantity),
-        "timestamp": str(time.time()),
-    },
-    maxlen=10000,  # Cap stream length; older events are trimmed
-)
-
-# Consume events (in SAGA orchestrator):
-messages = await db.xreadgroup(
-    groupname="saga-orchestrator",
-    consumername="orchestrator-1",
-    streams={"saga:events": ">"},  # ">" means new messages only
-    count=10,
-    block=1000,  # Block 1 second if no messages
-)
-
-for stream, events in messages:
-    for event_id, fields in events:
-        await process_event(fields)
-        await db.xack("saga:events", "saga-orchestrator", event_id)
-```
-
-**If Kafka is required** (e.g., instructor mandates it): Use `aiokafka>=0.11.0` (async) over `confluent-kafka` (synchronous C extension, harder to use with asyncio). Verify: `pip index versions aiokafka`.
-
----
-
-## 5. Supporting Libraries
-
-### Keep: msgspec 0.18.x
-
-**Package:** `msgspec`
-**Version:** `>=0.18.6` (already installed)
-**Confidence:** High
-
-Keep msgspec for Redis serialization. It is faster than pydantic for encode/decode and already in use. The Struct definitions (`OrderValue`, `UserValue`, `StockValue`) require no changes for the async migration.
-
-### Add: structlog (optional but recommended)
-
-**Package:** `structlog`
-**Version:** `>=24.0.0`
-**Confidence:** Medium
-
-Structured JSON logging is critical for debugging distributed SAGA failures across services. `structlog` integrates with Quart and outputs machine-parseable logs. Without it, debugging "payment crashed mid-SAGA" means parsing unstructured log strings across 6 containers.
-
-```python
-import structlog
-log = structlog.get_logger()
-
-await log.ainfo("saga_step_complete",
-    saga_id=saga_id,
-    step="payment",
-    order_id=order_id,
-    duration_ms=elapsed,
+payment_db = RedisCluster(
+    startup_nodes=[ClusterNode(os.environ['PAYMENT_REDIS_HOST'], ...)],
+    password=os.environ['REDIS_PASSWORD'],
+    decode_responses=False,
 )
 ```
 
-### Add: tenacity (retry logic)
+New env vars needed for the orchestrator container: `STOCK_REDIS_HOST`, `STOCK_REDIS_PORT`, `PAYMENT_REDIS_HOST`, `PAYMENT_REDIS_PORT`. These replace the gRPC address env vars (`STOCK_GRPC_ADDR`, `PAYMENT_GRPC_ADDR`) when `COMM_MODE=queue`.
 
-**Package:** `tenacity`
-**Version:** `>=8.0.0`
-**Confidence:** High
+---
 
-The fault tolerance requirement ("system recovers when any single container dies mid-transaction") requires retry logic with exponential backoff on gRPC calls. Hand-rolling retry decorators is error-prone. Tenacity integrates cleanly with async code:
+## Integration Points: What Changes vs. What Stays
 
-```python
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+### Application Code Changes
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=0.1, max=2),
-    retry=retry_if_exception_type(grpc.aio.AioRpcError),
-)
-async def subtract_stock_with_retry(stub, request):
-    return await stub.SubtractStock(request)
+| Component | Change | Effort |
+|-----------|--------|--------|
+| `orchestrator/client.py` | Add stream-based request/reply alongside gRPC stubs; facade dispatches based on `COMM_MODE` | Medium |
+| `orchestrator/app.py` | Initialize domain Redis cluster connections; read env var toggles; start reply consumer tasks if `COMM_MODE=queue` | Low |
+| `stock/app.py` | Add request stream consumer background task (dispatches to existing `StockServiceServicer` logic) | Medium |
+| `payment/app.py` | Add request stream consumer background task (dispatches to existing `PaymentServiceServicer` logic) | Medium |
+| New: `orchestrator/tpc.py` | 2PC coordinator state machine (modeled on `saga.py`, ~150 lines) | Medium |
+| New: `orchestrator/tpc_coordinator.py` | 2PC checkout execution (modeled on `grpc_server.py:run_checkout`, ~200 lines) | Medium |
+| New: `orchestrator/stream_client.py` | Stream-based request/reply functions (replaces gRPC calls, ~100 lines) | Medium |
+| New: `stock/stream_handler.py` | Stream consumer dispatching to existing Lua-backed business logic (~80 lines) | Low |
+| New: `payment/stream_handler.py` | Stream consumer dispatching to existing Lua-backed business logic (~80 lines) | Low |
+
+### What Does NOT Change
+
+- **Proto definitions** (`protos/*.proto`) — gRPC path stays as-is for fallback
+- **Lua scripts** in stock/payment `grpc_server.py` — business logic is transport-agnostic (reserve, release, charge, refund)
+- **Redis Cluster topology** — same 3+3 per domain, no new clusters
+- **Docker Compose / Kubernetes configs** — no new containers, no new ports (streams use existing Redis connections)
+- **External API routes** — Order service HTTP API unchanged
+- **`requirements.txt` files** — no new packages in any service
+- **`orchestrator/saga.py`** — SAGA state machine unchanged, used when `TRANSACTION_MODE=saga`
+- **`orchestrator/events.py`** — SAGA lifecycle events unchanged
+- **`orchestrator/consumers.py`** — existing consumer loops unchanged
+
+---
+
+## Timeout and Failure Handling
+
+| Concern | gRPC (current) | Redis Streams (v2.0) |
+|---------|----------------|----------------------|
+| Call timeout | `timeout=RPC_TIMEOUT` (5s) | `XREAD BLOCK 5000` (5s) |
+| Service down | gRPC `UNAVAILABLE` status | XREAD timeout (no reply arrives) |
+| Circuit breaker | `@stock_breaker` decorator on gRPC wrapper | Same decorator on stream-based wrapper |
+| Retry logic | `retry_forward()` / `retry_forever()` | Same functions, wrapping stream calls instead of gRPC calls |
+| Idempotency | `idempotency_key` in protobuf request | `idempotency_key` field in stream message envelope |
+
+---
+
+## Installation
+
+```bash
+# No changes needed. Existing requirements.txt files are sufficient for v2.0.
+# All services already have: redis[hiredis]==5.0.3, msgspec==0.18.6
 ```
 
-### Remove: requests 2.31.0
+---
 
-**Package:** `requests`
-**Version:** Remove entirely
-**Reason:** Synchronous HTTP library. Once inter-service calls move to gRPC, `requests` has no role. Keeping it risks accidental synchronous calls blocking the event loop in Quart handlers.
+## Confidence Assessment
+
+| Claim | Confidence | Basis |
+|-------|------------|-------|
+| No new PyPI dependencies needed | HIGH | Verified by reading all 4 `requirements.txt` and mapping every v2.0 feature to existing library capabilities |
+| Redis Streams XADD/XREADGROUP/XREAD sufficient for request/reply | HIGH | Already exercised in `events.py` and `consumers.py`; redis-py 5.0.3 supports all needed methods |
+| 2PC implementable with same Redis hash + Lua CAS pattern | HIGH | Structurally identical to existing SAGA state machine in `saga.py` — different states, same primitives |
+| Orchestrator needs multi-cluster Redis connections for streams | HIGH | Follows from Redis Cluster hash tag constraint — streams must co-locate with domain data |
+| Circuit breaker pattern reusable for stream calls | HIGH | `circuitbreaker` library is a decorator; works on any async function regardless of transport |
+| Per-correlation reply streams viable | MEDIUM | Simple approach avoids shared-stream filtering complexity, but creates many short-lived keys. Verify under benchmark load. Alternative: single reply stream with correlation ID filtering. |
 
 ---
 
-## 6. Complete requirements.txt for Target Stack
+## Sources
 
-```
-# Web framework (async)
-quart>=0.20.0,<0.21
-uvicorn[standard]>=0.30.0,<0.31
-
-# gRPC
-grpcio>=1.65.0,<2.0
-grpcio-tools>=1.65.0,<2.0
-
-# Database
-redis[hiredis]>=5.0.3,<6.0  # hiredis extra for faster parsing
-
-# Serialization (keep existing)
-msgspec>=0.18.6,<0.19
-
-# Fault tolerance
-tenacity>=8.0.0,<9.0
-
-# Structured logging (recommended)
-structlog>=24.0.0,<25.0
-```
-
-**Note:** `redis[hiredis]` adds the `hiredis` C extension for faster Redis protocol parsing. Safe to add since redis-py falls back to pure Python if hiredis is unavailable. Measurably improves throughput under load.
+- Codebase analysis: `orchestrator/saga.py`, `orchestrator/events.py`, `orchestrator/consumers.py`, `orchestrator/client.py`, `orchestrator/grpc_server.py`, `stock/grpc_server.py`, all `requirements.txt`
+- [redis-py async documentation](https://redis.readthedocs.io/en/stable/examples/asyncio_examples.html)
+- [Martin Fowler — Two-Phase Commit patterns](https://martinfowler.com/articles/patterns-of-distributed-systems/two-phase-commit.html)
+- [Redis Streams async patterns](https://dev.to/streamersuite/async-job-queues-made-simple-with-redis-streams-and-python-asyncio-4410)
+- [Two-Phase Commit overview](https://medium.com/@abhi.strike/two-phase-commit-2pc-6f554f7772fa)
 
 ---
 
-## 7. What NOT to Use (Explicit Exclusions)
-
-| Package | Why Not |
-|---------|---------|
-| `FastAPI` | Pydantic overhead, greenfield API, higher migration cost vs. Quart for Flask codebase |
-| `asyncpg` / `sqlalchemy` | Not Redis; course requires Redis |
-| `aioredis` (standalone) | Deprecated; merged into redis-py 4.2+; installing it creates import conflicts |
-| `confluent-kafka` | Synchronous C extension; poor asyncio integration; requires Kafka infra |
-| `kafka-python` | Unmaintained; use aiokafka if Kafka is required |
-| `celery` | WSGI-first task queue; not designed for SAGA patterns; adds broker complexity |
-| `dramatiq` | Same concerns as celery; not appropriate for distributed transaction coordination |
-| `gevent` / `eventlet` | Monkey-patching breaks gRPC; incompatible with true async |
-| `hypercorn` | Lower throughput than Uvicorn in benchmarks for Quart |
-| `grpclib` | Third-party gRPC; grpcio native async (`grpc.aio`) is mature and better supported |
-| `httpx` | Useful async HTTP client but redundant once gRPC handles inter-service calls |
-| `requests` | Synchronous; blocks Quart event loop; must be removed |
-
----
-
-## 8. Confidence Summary
-
-| Decision | Confidence | Primary Risk |
-|----------|------------|--------------|
-| Quart over FastAPI | High | Quart is less popular; fewer StackOverflow answers for edge cases |
-| Uvicorn over Hypercorn | High | Minimal — both work; Uvicorn is industry default |
-| grpcio for inter-service | High | Proto compilation step adds build complexity |
-| redis-py async (same package) | High | None — already installed, just change import |
-| Redis Streams over Kafka | High | Instructor might expect Kafka for "event-driven" architecture points; clarify with TA |
-| Redis Cluster (6 nodes) | Medium | CPU budget constraint; verify 6 Redis containers fit within 20 CPU budget alongside app services |
-| Specific library versions | Medium | Training data cutoff August 2025; patch versions may have changed; verify before pinning |
-| idempotency_key in protos | High | Omitting this leads to double-compensation bugs that are hard to reproduce |
-
----
-
-## 9. Migration Sequencing Recommendation
-
-Given March 13 deadline (approximately 2 weeks):
-
-**Week 1 (Days 1-5): Foundation**
-1. Add grpcio + generate protos — test gRPC stubs work between services
-2. Migrate Flask → Quart + Uvicorn — validate all existing routes still respond
-3. Switch redis.Redis → redis.asyncio.Redis — validate reads/writes work async
-
-**Week 2 (Days 6-10): SAGA + Fault Tolerance**
-4. Implement SAGA orchestrator with Redis Streams events
-5. Add Redis Cluster (can use single-node cluster mode locally for testing)
-6. Add tenacity retry on gRPC calls
-7. Add idempotency keys to all mutation operations
-8. Run benchmark + fault injection tests (kill one container, verify recovery)
-
-Do not attempt Redis Cluster and SAGA simultaneously — debug one layer at a time.
-
----
-
-*Research complete: 2026-02-27*
-*Versions require verification against PyPI before pinning (web search unavailable during this session)*
+*Research complete: 2026-03-12*
+*Stack conclusion: Zero new dependencies. v2.0 is a pure application-code effort on existing infrastructure.*
