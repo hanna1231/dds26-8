@@ -278,12 +278,12 @@ async def test_recovery_preparing_aborts(tpc_db, clean_tpc_db):
     # Make stale (updated_at = 0)
     await tpc_db.hset(tpc_key, "updated_at", "0")
 
-    with patch("recovery.abort_stock", new_callable=AsyncMock,
+    with patch("transport.abort_stock", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_as, \
-         patch("recovery.abort_payment", new_callable=AsyncMock,
+         patch("transport.abort_payment", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_ap, \
-         patch("recovery.commit_stock", new_callable=AsyncMock) as mock_cs, \
-         patch("recovery.commit_payment", new_callable=AsyncMock) as mock_cp:
+         patch("transport.commit_stock", new_callable=AsyncMock) as mock_cs, \
+         patch("transport.commit_payment", new_callable=AsyncMock) as mock_cp:
 
         await recover_incomplete_tpc(tpc_db)
 
@@ -313,12 +313,12 @@ async def test_recovery_committing_commits(tpc_db, clean_tpc_db):
     # Make stale
     await tpc_db.hset(tpc_key, "updated_at", "0")
 
-    with patch("recovery.commit_stock", new_callable=AsyncMock,
+    with patch("transport.commit_stock", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_cs, \
-         patch("recovery.commit_payment", new_callable=AsyncMock,
+         patch("transport.commit_payment", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_cp, \
-         patch("recovery.abort_stock", new_callable=AsyncMock) as mock_as, \
-         patch("recovery.abort_payment", new_callable=AsyncMock) as mock_ap:
+         patch("transport.abort_stock", new_callable=AsyncMock) as mock_as, \
+         patch("transport.abort_payment", new_callable=AsyncMock) as mock_ap:
 
         await recover_incomplete_tpc(tpc_db)
 
@@ -348,9 +348,9 @@ async def test_recovery_aborting_aborts(tpc_db, clean_tpc_db):
     # Make stale
     await tpc_db.hset(tpc_key, "updated_at", "0")
 
-    with patch("recovery.abort_stock", new_callable=AsyncMock,
+    with patch("transport.abort_stock", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_as, \
-         patch("recovery.abort_payment", new_callable=AsyncMock,
+         patch("transport.abort_payment", new_callable=AsyncMock,
                return_value={"success": True, "error_message": ""}) as mock_ap:
 
         await recover_incomplete_tpc(tpc_db)
@@ -379,10 +379,10 @@ async def test_recovery_skips_saga(tpc_db, clean_tpc_db):
     saga_key = f"{{saga:{order_id}}}"
     await tpc_db.hset(saga_key, "updated_at", "0")
 
-    with patch("recovery.abort_stock", new_callable=AsyncMock) as mock_as, \
-         patch("recovery.abort_payment", new_callable=AsyncMock) as mock_ap, \
-         patch("recovery.commit_stock", new_callable=AsyncMock) as mock_cs, \
-         patch("recovery.commit_payment", new_callable=AsyncMock) as mock_cp:
+    with patch("transport.abort_stock", new_callable=AsyncMock) as mock_as, \
+         patch("transport.abort_payment", new_callable=AsyncMock) as mock_ap, \
+         patch("transport.commit_stock", new_callable=AsyncMock) as mock_cs, \
+         patch("transport.commit_payment", new_callable=AsyncMock) as mock_cp:
 
         await recover_incomplete_tpc(tpc_db)
 

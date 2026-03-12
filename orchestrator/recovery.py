@@ -4,6 +4,7 @@ SAGA startup recovery scanner.
 On orchestrator restart, scans Redis for non-terminal SAGAs and drives each
 to a terminal state (COMPLETED or FAILED) before the orchestrator serves traffic.
 """
+import asyncio
 import json
 import logging
 import os
@@ -134,5 +135,113 @@ async def recover_incomplete_sagas(db) -> None:
 
     logging.info(
         "SAGA recovery complete: %d recovered, %d skipped (recent)",
+        recovered, skipped,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2PC (TPC) recovery scanner (TPC-06)
+# ---------------------------------------------------------------------------
+
+TPC_NON_TERMINAL_STATES = {"INIT", "PREPARING", "COMMITTING", "ABORTING"}
+
+
+async def resume_tpc(db, tpc: dict) -> None:
+    """
+    Drive a partially-completed TPC transaction to a terminal state.
+
+    - INIT / PREPARING -> presumed abort (ABORTING -> ABORTED)
+    - COMMITTING -> re-send commits (COMMITTED)
+    - ABORTING -> re-send aborts (ABORTED)
+    """
+    from tpc import transition_tpc_state
+    from transport import commit_stock, abort_stock, commit_payment, abort_payment
+
+    order_id = tpc["order_id"]
+    tpc_key = f"{{tpc:{order_id}}}"
+    state = tpc["state"]
+    items = json.loads(tpc["items_json"])
+    user_id = tpc["user_id"]
+
+    logging.info("Recovering TPC %s from state=%s", order_id, state)
+
+    if state in ("INIT", "PREPARING"):
+        # Presumed abort
+        if state == "INIT":
+            await transition_tpc_state(db, tpc_key, "INIT", "PREPARING")
+        await transition_tpc_state(db, tpc_key, "PREPARING", "ABORTING")
+
+        abort_futures = []
+        for item in items:
+            abort_futures.append(abort_stock(item["item_id"], order_id))
+        abort_futures.append(abort_payment(user_id, order_id))
+        await asyncio.gather(*abort_futures, return_exceptions=True)
+
+        await transition_tpc_state(db, tpc_key, "ABORTING", "ABORTED")
+        logging.info("TPC %s: presumed abort -> ABORTED", order_id)
+
+    elif state == "COMMITTING":
+        # Re-send commits
+        commit_futures = []
+        for item in items:
+            commit_futures.append(commit_stock(item["item_id"], order_id))
+        commit_futures.append(commit_payment(user_id, order_id))
+        await asyncio.gather(*commit_futures, return_exceptions=True)
+
+        await transition_tpc_state(db, tpc_key, "COMMITTING", "COMMITTED")
+        logging.info("TPC %s: re-sent commits -> COMMITTED", order_id)
+
+    elif state == "ABORTING":
+        # Re-send aborts
+        abort_futures = []
+        for item in items:
+            abort_futures.append(abort_stock(item["item_id"], order_id))
+        abort_futures.append(abort_payment(user_id, order_id))
+        await asyncio.gather(*abort_futures, return_exceptions=True)
+
+        await transition_tpc_state(db, tpc_key, "ABORTING", "ABORTED")
+        logging.info("TPC %s: re-sent aborts -> ABORTED", order_id)
+
+
+async def recover_incomplete_tpc(db) -> None:
+    """
+    Scan Redis for incomplete TPC transactions and drive to terminal state.
+
+    Only processes {tpc:*} keys (skips {saga:*}).
+    Skips records younger than STALENESS_THRESHOLD_SECONDS.
+    """
+    recovered = 0
+    skipped = 0
+    now = int(time.time())
+
+    async for key in db.scan_iter(match="{tpc:*", count=100):
+        try:
+            raw = await db.hgetall(key)
+        except Exception:
+            continue
+        if not raw:
+            continue
+        tpc = {k.decode(): v.decode() for k, v in raw.items()}
+        state = tpc.get("state", "")
+
+        if state not in TPC_NON_TERMINAL_STATES:
+            continue  # terminal -- skip
+
+        updated_at = int(tpc.get("updated_at", "0"))
+        age_seconds = now - updated_at
+
+        if age_seconds < STALENESS_THRESHOLD_SECONDS:
+            logging.warning(
+                "TPC %s is in %s state but only %ds old -- skipping (recent)",
+                tpc.get("order_id"), state, age_seconds,
+            )
+            skipped += 1
+            continue
+
+        await resume_tpc(db, tpc)
+        recovered += 1
+
+    logging.info(
+        "TPC recovery complete: %d recovered, %d skipped (recent)",
         recovered, skipped,
     )
