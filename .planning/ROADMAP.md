@@ -145,5 +145,5 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
 | 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
 | 11. 2PC State Machine & Participants | 2/2 | Complete    | 2026-03-12 | - |
-| 12. 2PC Coordinator & Recovery | 2/2 | Complete   | 2026-03-12 | - |
+| 12. 2PC Coordinator & Recovery | 2/2 | Complete    | 2026-03-12 | - |
 | 13. Integration & Benchmark | v2.0 | 0/? | Not started | - |
