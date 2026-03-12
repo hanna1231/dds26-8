@@ -182,6 +182,31 @@ async def clean_orchestrator_db(orchestrator_db):
     # No cleanup needed after — next test will flush at start
 
 
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def tpc_db():
+    """Redis client for 2PC TPC records (db=3, same as orchestrator_db).
+
+    TPC and SAGA records use different key prefixes ({tpc:} vs {saga:})
+    so they coexist safely in the same Redis DB.
+    """
+    host = os.environ.get("REDIS_HOST", "localhost")
+    port = int(os.environ.get("REDIS_PORT", "6379"))
+    password = os.environ.get("REDIS_PASSWORD", None)
+
+    db = redis.Redis(host=host, port=port, password=password, db=3)
+    await db.flushdb()
+    yield db
+    await db.flushdb()
+    await db.aclose()
+
+
+@pytest_asyncio.fixture(scope="function", loop_scope="session")
+async def clean_tpc_db(tpc_db):
+    """Flush TPC Redis DB before each test for record isolation."""
+    await tpc_db.flushdb()
+    yield
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
