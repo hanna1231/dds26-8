@@ -86,11 +86,11 @@ kill-test:
 	ORCH_REDIS_HOST=shared-redis-0 \
 	docker compose --profile simple up -d
 	@sleep 20
-	python scripts/kill_test.py --service $(SERVICE)
+	python3 scripts/kill_test.py --service $(SERVICE)
 
 # Run kill-container tests for all services sequentially (manages cluster lifecycle internally)
 kill-test-all:
-	python scripts/kill_test.py --all
+	python3 scripts/kill_test.py --all
 
 # Run Docker integration tests in all 4 mode combinations
 test-all-modes:
@@ -112,7 +112,7 @@ test-all-modes:
 			ORCH_REDIS_HOST=shared-redis-0 \
 			docker compose --profile simple up -d --build; \
 			sleep 20; \
-			cd test && python -m pytest test_microservices.py -v && cd .. || { cd ..; echo "FAILED: $$tp/$$cm"; exit 1; }; \
+			cd test && python3 -m pytest test_microservices.py -v && cd .. || { cd ..; echo "FAILED: $$tp/$$cm"; exit 1; }; \
 		done; \
 	done
 	@echo "\nAll 4 modes passed!"
@@ -137,7 +137,7 @@ kill-test-all-modes:
 			ORCH_REDIS_HOST=shared-redis-0 \
 			docker compose --profile simple up -d --build; \
 			sleep 20; \
-			python scripts/kill_test.py --all || { echo "FAILED: $$tp/$$cm"; exit 1; }; \
+			python3 scripts/kill_test.py --all || { echo "FAILED: $$tp/$$cm"; exit 1; }; \
 		done; \
 	done
 	@echo "\nAll kill-tests passed!"
