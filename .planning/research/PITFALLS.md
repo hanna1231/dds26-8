@@ -1,391 +1,391 @@
-# Pitfalls: Adding 2PC & Message Queues to Existing SAGA Checkout System
+# Pitfalls: Adding Abstract Workflow Engine to Existing SAGA/2PC Orchestrator
 
-**Research Date:** 2026-03-12
-**Scope:** Adding Two-Phase Commit (2PC) as alternative transaction pattern and Redis Streams message queues as default inter-service communication to existing SAGA-based distributed checkout system
-**Context:** v2.0 milestone for DDS26-8. Existing system has working SAGA orchestrator, gRPC inter-service calls, Redis Cluster, Lua CAS operations, idempotency keys, circuit breakers, and container-kill recovery. Adding 2PC toggle and message queue toggle alongside existing patterns.
+**Domain:** Distributed workflow engine abstraction over existing concrete orchestrator
+**Researched:** 2026-03-26
+**Confidence:** HIGH (based on direct codebase analysis + HIGH confidence domain principles)
+**Milestone scope:** v3.0 — Generic workflow engine + checkout rewritten as workflow definition
+
+---
+
+## Context
+
+The existing system has working SAGA and 2PC implementations with 0 consistency violations under benchmark. The v3.0 goal is to introduce a generic workflow engine abstraction (Temporal/Cadence-inspired) so checkout is defined as a workflow registration rather than hardcoded orchestrator logic. Deadline is 6 days. The primary risk is breaking what works.
 
 ---
 
 ## Critical Pitfalls
 
-### P1 -- 2PC Coordinator Crash Between Prepare and Commit (The Blocking Hazard)
+### P1 -- Losing Lua CAS Atomicity Behind the Abstraction Layer
 
-**What goes wrong:** The defining weakness of 2PC. The orchestrator sends PREPARE to Stock and Payment. Both respond VOTE_COMMIT and write prepare logs. The orchestrator crashes before writing or sending COMMIT. Both participants are now holding reserved resources (stock decremented tentatively, payment held) indefinitely. Unlike SAGA where compensation eventually runs, 2PC participants that voted COMMIT cannot unilaterally abort -- they must wait for the coordinator's decision. Without a durable decision log, the coordinator restarts with no memory of the in-flight transaction.
+**What goes wrong:**
+The existing `saga.py` and `tpc.py` use Lua CAS scripts (`TRANSITION_LUA`) for atomic state transitions in Redis. Every state change is: read current state, compare against expected, set new state — atomically within a single `EVAL`. If the workflow engine's "step completed" callback replaces this with a simple `HSET state NEW_STATE`, you lose the compare-and-swap guarantee. Two concurrent recovery attempts (e.g., startup scanner + live request) can both think they own the transition and both proceed, corrupting state.
 
-In this codebase specifically: the orchestrator is already a single replica (`maxSurge=0`). A crash means no coordinator is running until Kubernetes restarts it. The participants hold resources for the entire restart window (typically 10-30 seconds). Under benchmark load, dozens of transactions can be blocked.
+**Why it happens:**
+The abstraction hides the transport. The engine says "mark step X done" and the implementation does `HSET` without understanding that the Lua CAS is what prevents TOCTOU races. The developer implementing the engine callbacks copies the simpler `HSET` pattern and misses that `transition_state()` exists for a reason.
+
+**How to avoid:**
+The workflow engine's state persistence layer MUST call `transition_state()` (or `transition_tpc_state()`) for all state changes — never raw `HSET`. If the engine introduces its own state record format, it must include an equivalent Lua CAS. Do not add a new `workflow_state` field that bypasses the existing CAS mechanism. The safest approach: the engine's execution layer calls the existing `transition_state()` / `transition_tpc_state()` functions directly, treating them as the storage API.
 
 **Warning signs:**
-- 2PC state stored only in memory (no Redis persistence of coordinator decision)
-- No WAL (Write-Ahead Log) equivalent before sending COMMIT/ABORT to participants
-- Participants hold locks/reservations with no timeout
-- Recovery scanner does not handle 2PC records, only SAGA records
-- Benchmark kill-test causes permanent resource leaks (stock reserved but never committed or released)
+- Engine `StepResult` or `WorkflowContext` that writes state without calling `transition_state()`
+- A new `workflow.py` module that reimplements state persistence independently of `saga.py`/`tpc.py`
+- Tests that pass but benchmark kill-tests show consistency violations
 
-**Prevention:**
-- Write the coordinator's decision (COMMIT or ABORT) to Redis BEFORE sending phase-2 messages to participants. Use the existing `{saga:ORDER_ID}` hash pattern but with 2PC-specific states (e.g., `2PC_PREPARING`, `2PC_COMMITTING`, `2PC_COMMITTED`, `2PC_ABORTING`, `2PC_ABORTED`)
-- Extend the existing `recovery.py` scanner to handle 2PC records: if a 2PC record is in `2PC_COMMITTING`, replay COMMIT to all participants; if in `2PC_PREPARING`, send ABORT (the safe default when coordinator decision was never recorded)
-- Add participant-side timeouts: if a participant has voted COMMIT but receives no phase-2 message within N seconds, it must query the coordinator (or its Redis log) for the decision. This prevents permanent blocking
-- Use the existing Lua CAS pattern (`transition_state`) to atomically transition 2PC states, preventing split-brain on coordinator restart
-
-**Phase:** Phase 1 -- 2PC state machine design. This is THE critical design decision for 2PC; get it wrong and container-kill tests will fail every time.
+**Phase to address:**
+Phase 1 (engine design). This is the most dangerous structural pitfall. The Lua CAS is the consistency foundation — the engine must be designed around it, not over it.
 
 ---
 
-### P2 -- Participant Prepare Without Actual Resource Reservation (Paper Vote)
+### P2 -- Recovery Scanner Blindness to Abstract Workflow Records
 
-**What goes wrong:** A participant responds VOTE_COMMIT to PREPARE without actually reserving the resource. Between PREPARE and COMMIT, another transaction consumes the resource. When COMMIT arrives, the participant cannot fulfill its promise. This violates the fundamental 2PC contract: a VOTE_COMMIT is an irrevocable promise.
+**What goes wrong:**
+`recovery.py` scans `{saga:*}` and `{tpc:*}` keys and applies protocol-specific recovery logic. If the workflow engine introduces a new key format (e.g., `{workflow:ORDER_ID}`) or changes the `state` field semantics, the recovery scanner will silently skip in-flight workflows during orchestrator restart. Transactions are stuck forever in a non-terminal state. Container-kill tests fail.
 
-In this codebase: Stock uses Lua CAS to atomically decrement. If PREPARE just "checks" stock is available without decrementing, a concurrent checkout can consume that stock before COMMIT arrives. Payment has the same issue with credit.
+**Why it happens:**
+The engine is designed as a new abstraction but the recovery scanner is not updated. The developer considers the engine "separate" from the recovery path and defers the integration. Under normal operation everything works — the scanner is only exercised during crash recovery.
+
+**How to avoid:**
+Choose one of two approaches and commit before writing any engine code:
+1. **Reuse existing record format**: the engine stores its state in `{saga:ORDER_ID}` or `{tpc:ORDER_ID}` hashes using the exact same field names (`state`, `updated_at`, etc.) and the same state machine strings. The recovery scanner works unchanged. This is the safe, fast option for a 6-day deadline.
+2. **Extend the scanner**: if the engine needs a new record format, update `recover_incomplete_sagas()` and `recover_incomplete_tpc()` in the same PR that adds the engine. Never ship the engine without confirmed scanner coverage.
 
 **Warning signs:**
-- PREPARE handler that reads current state without modifying it (read-only check)
-- No tentative state for resources (stock shows "10 available" to everyone, rather than "10 available, 3 tentatively reserved")
-- Concurrent checkouts succeed in PREPARE phase for the same limited resource
-- The existing `ReserveStock` Lua script is used directly for PREPARE without adaptation
+- Engine creates keys with a new prefix (`workflow:`, `engine:`, etc.) without updating the scan pattern in `recovery.py`
+- Recovery scanner tested only in isolation, not against engine-generated records
+- `NON_TERMINAL_STATES` set in `recovery.py` not extended when engine adds intermediate states
 
-**Prevention:**
-- PREPARE must actually reserve the resource. For stock: decrement available stock and record the tentative reservation (e.g., `{item:UUID}:pending:ORDER_ID`). For payment: hold the credit. The existing `RESERVE_STOCK_ATOMIC_LUA` already does this -- the key insight is that 2PC PREPARE should use the same atomic reservation that SAGA's forward step uses
-- COMMIT then finalizes (removes the pending marker, makes the reservation permanent). ABORT releases the tentative reservation (same as SAGA compensation)
-- This means 2PC PREPARE is functionally identical to the current SAGA forward step, and 2PC ABORT is functionally identical to SAGA compensation. The difference is purely in the coordination protocol, not the participant operations
-- If you make PREPARE a no-op check, you have converted 2PC into optimistic 2PC, which has weaker guarantees and will fail the consistency benchmark
-
-**Phase:** Phase 1 -- participant 2PC handlers. Must be designed together with P1.
+**Phase to address:**
+Phase 1 (engine design). Must be an explicit decision at design time, not retrofitted.
 
 ---
 
-### P3 -- Request-Reply Over Redis Streams: Correlation and Timeout Hell
+### P3 -- Compensation Logic Detached From the Engine Abstraction
 
-**What goes wrong:** Replacing gRPC (synchronous request-reply) with Redis Streams (async pub-sub) for inter-service calls requires building a request-reply protocol on top of an inherently one-directional messaging system. The orchestrator sends a command to `{stock:commands}` stream and must wait for a response on a reply stream. This requires: (1) a correlation ID linking request to response, (2) a per-request reply stream or a shared reply stream with filtering, (3) timeout handling when the response never arrives, (4) cleanup of orphaned reply entries.
+**What goes wrong:**
+`run_compensation()` in `grpc_server.py` is tightly coupled to the SAGA model: it reads `payment_charged`, `stock_reserved`, `refund_done`, `stock_restored` flags from the Redis hash and executes compensation in reverse order. If the workflow engine abstracts steps as a generic list but the compensation implementation still reads these hardcoded flags, a workflow with different step ordering or different step names will compensate incorrectly — or skip compensation entirely.
 
-Getting any of these wrong creates subtle bugs that only surface under load or during container kills.
+Concrete failure: the engine executes steps in order `[reserve_stock, charge_payment]`. If `charge_payment` fails, the engine calls "compensate". The compensation function reads `payment_charged == "0"` and skips the refund. But the Lua CAS may not have set `payment_charged = "1"` yet if the engine wraps state transitions differently. Result: stock is not released.
+
+**Why it happens:**
+`run_compensation()` was written with concrete knowledge of exactly two steps. The workflow engine abstraction makes step order/names configurable, but compensation still assumes the original field names. The integration point between the abstract engine and the concrete compensation is never defined.
+
+**How to avoid:**
+Define compensation as part of the workflow step definition, not as a separate hardcoded function. Each step registration includes an `action` and a `compensation` callable. The engine executes compensations in reverse step order using only the registered callables. The hardcoded `run_compensation()` becomes the checkout-specific implementation of this contract, not a generic compensation runner. Preserve the existing per-step completion flags (`payment_charged`, `stock_reserved`) as the mechanism for idempotency-safe compensation — just route through the abstraction.
 
 **Warning signs:**
-- Using a single shared reply stream without correlation IDs (responses go to wrong callers)
-- Blocking `XREAD` with no timeout (hangs forever if participant crashes)
-- Reply stream entries accumulating without cleanup (memory leak)
-- No handling for the case where the reply arrives AFTER the caller has timed out and moved on
-- Consumer group on reply stream with multiple orchestrator-side consumers stealing each other's responses
+- Engine has a `compensate()` method that calls `run_compensation()` directly with no additional indirection
+- Step registration does not include a `compensation` callable
+- `reserved_items_json` partial-reservation tracking is lost in the abstraction
+- Kill-test shows stock not released when payment fails mid-checkout
 
-**Prevention:**
-- Use a per-transaction reply stream or a correlation-ID-based approach. Recommended: the orchestrator includes a `reply_stream` and `correlation_id` in each command message. The participant writes the response to the specified reply stream with the correlation ID
-- Use `XREAD` with `BLOCK` timeout (e.g., 5000ms matching the current `RPC_TIMEOUT = 5.0`). If timeout expires, treat as the same UNKNOWN outcome the existing circuit breaker handles
-- Do NOT use consumer groups on reply streams -- the orchestrator is the sole consumer. Use plain `XREAD` with a last-seen ID
-- Clean up reply stream entries after reading (XDEL or use MAXLEN trimming). Otherwise Redis memory grows unboundedly
-- Consider using a single `{orchestrator:replies}` stream with correlation IDs rather than per-transaction reply streams to avoid stream proliferation. Use hash tags to keep it on one Redis Cluster slot
-
-**Phase:** Phase 1 -- message queue architecture. The entire request-reply protocol must be designed before any implementation begins.
+**Phase to address:**
+Phase 1 (engine API design). The compensation contract must be explicit in the engine interface.
 
 ---
 
-### P4 -- Mixing SAGA and 2PC State Machines in the Same Orchestrator
+### P4 -- Over-Abstracting for a 6-Day Deadline (The Temporal Trap)
 
-**What goes wrong:** The orchestrator currently has a clean SAGA state machine (`STARTED -> STOCK_RESERVED -> PAYMENT_CHARGED -> COMPLETED | COMPENSATING -> FAILED`). Adding 2PC introduces a second state machine (`2PC_STARTED -> 2PC_PREPARING -> 2PC_PREPARED -> 2PC_COMMITTING -> 2PC_COMMITTED | 2PC_ABORTING -> 2PC_ABORTED`). If both share the same `{saga:ORDER_ID}` namespace and `transition_state` Lua script without clear separation, state machine contamination occurs: a 2PC transaction accidentally follows SAGA transitions, or the recovery scanner applies SAGA recovery logic to a 2PC transaction.
+**What goes wrong:**
+The developer designs a full workflow engine inspired by Temporal/Cadence: activities, workflow contexts, task queues, event sourcing, history replay, signals, and child workflows. This takes 4 of 6 days. There is no time left to rewrite checkout as a workflow definition, run the benchmark, or debug edge cases. The submission is a half-implemented engine with the existing hardcoded checkout still doing the actual work under the hood.
 
-In this codebase: `saga.py` has hardcoded `VALID_TRANSITIONS` dict. The recovery scanner in `recovery.py` has hardcoded `NON_TERMINAL_STATES`. Neither knows about 2PC states.
+**Why it happens:**
+Temporal/Cadence are genuinely impressive systems. Reading their documentation makes you want to implement all of it. The course requirement says "Temporal/Cadence-inspired" — which can mean anything from a 50-line step executor to a full durable execution engine. Without explicit scope constraints, scope creeps to the complex end.
+
+**How to avoid:**
+The engine only needs to do what the existing checkout does — nothing more. The minimum viable engine for this codebase:
+- A `Workflow` dataclass: `steps: list[WorkflowStep]`, `execution_mode: Literal["saga", "2pc"]`
+- A `WorkflowStep` dataclass: `name: str`, `action: Callable`, `compensation: Callable`
+- A `WorkflowEngine.execute(workflow, context)` method that runs steps, handles compensation on failure, and delegates all state persistence to the existing `transition_state()` / `transition_tpc_state()` functions
+- A `checkout_workflow` registration that maps the existing `run_checkout()` steps into `WorkflowStep` instances
+
+This is ~150 lines of new Python. The checkout rewrite is ~50 lines. Total new code for the engine feature: ~200 lines. If it is growing past 400 lines, scope has drifted.
 
 **Warning signs:**
-- 2PC records stored in the same Redis key namespace as SAGA records without a `protocol` field
-- `VALID_TRANSITIONS` dict extended with 2PC states rather than having a separate dict
-- Recovery scanner treating 2PC `PREPARING` state like SAGA `STARTED` (attempting forward recovery instead of aborting)
-- Env var toggle switches protocol but recovery scanner doesn't check which protocol the record uses
-- Unit tests only test one protocol at a time, never mixed scenarios
+- Engine module has classes for `WorkflowContext`, `ActivityTask`, `TaskQueue`, `WorkflowHistory`, `WorkflowSignal`
+- Engine implements history replay or event sourcing
+- Engine has its own retry logic independent of `retry_forever()` and `retry_forward()`
+- `workflow.py` is more than 300 lines before checkout is even registered
 
-**Prevention:**
-- Add a `protocol` field (`saga` or `2pc`) to the transaction record hash, written at creation time
-- Create separate transition maps: `SAGA_TRANSITIONS` and `TPC_TRANSITIONS`. The `transition_state` Lua script is protocol-agnostic (just does CAS on state field), but Python-side validation must select the correct transition map based on the record's protocol field
-- Recovery scanner must branch on `protocol`: SAGA records get forward-or-compensate recovery; 2PC records get abort-if-uncommitted recovery (the safe default per P1)
-- The env var toggle (`TRANSACTION_PATTERN=saga|2pc`) controls which protocol NEW transactions use, but the system must always be able to handle BOTH protocols for in-flight and historical records (especially during rolling deploys)
-- Never allow a running system to have mixed-protocol in-flight transactions for the same order_id -- use the existing `create_saga_record` HSETNX pattern to prevent duplicates
-
-**Phase:** Phase 1 -- state machine design. This is the integration backbone for the entire v2.0.
+**Phase to address:**
+Phase 1 (scope definition). Explicitly cap the engine API surface before writing code.
 
 ---
 
-### P5 -- Message Queue Replacing gRPC Without Preserving Idempotency Guarantees
+### P5 -- Breaking Exactly-Once Semantics During the Checkout Rewrite
 
-**What goes wrong:** The current gRPC path has carefully designed idempotency: each call carries an idempotency key (e.g., `{saga:ORDER_ID}:step:reserve:ITEM_ID`), and participants use Lua scripts to atomically check-and-execute. When switching to Redis Streams, the idempotency key must still be present in the message payload and the participant must still perform the same Lua CAS check. If the message queue handler processes messages without idempotency keys (relying on consumer group "at-most-once" semantics from XACK), then crash-recovery message redelivery causes double-execution.
+**What goes wrong:**
+The current `run_checkout()` has a carefully designed exactly-once check at the top: read the existing SAGA record, return early if `COMPLETED`, clean up and retry if `FAILED`, return "in progress" for any other state. If the workflow engine wraps this function and adds its own "was this workflow already run?" check that uses a different key or logic, you get two independent idempotency mechanisms that can disagree. The engine says "no record, start fresh" while the SAGA record says "STARTED" — and a new execution begins alongside the existing one.
 
-In this codebase: the existing `RESERVE_STOCK_ATOMIC_LUA` and `CHARGE_PAYMENT_ATOMIC_LUA` scripts expect an idempotency key. The gRPC handlers pass it from the request protobuf field. The new message queue consumer must do the same.
+**Why it happens:**
+The engine is designed generically. It might add `{workflow:ORDER_ID}:status` as its own record without knowing the SAGA record already serves this purpose. Two callers of `StartCheckout` with the same `order_id` now race on two separate keys.
+
+**How to avoid:**
+The workflow engine must not introduce a separate idempotency key namespace. The existing SAGA/TPC record is the idempotency record. The engine's "already running?" check must delegate to `get_saga()` / `get_tpc()` — or more precisely, the existing `create_saga_record()` / `create_tpc_record()` HSETNX mechanism is the exactly-once guard, and the engine must not bypass or duplicate it. The engine's execute method should start with the existing record-creation and exactly-once logic, not add a layer above it.
 
 **Warning signs:**
-- Message queue command schema that omits `idempotency_key` field
-- Consumer that calls business logic directly (e.g., stock decrement) without going through the idempotency-aware Lua path
-- Consumer that ACKs before processing (at-most-once semantics that lose messages on crash)
-- Consumer that processes then ACKs (at-least-once) but without idempotency (double-processes on redelivery)
+- Engine creates `{workflow:*}` keys as its own idempotency guard
+- `run_checkout()` is called from inside the engine after the engine's own idempotency check
+- Concurrent requests with the same `order_id` result in two SAGA records being created
+- Benchmark shows double-charges or double-stock-decrements
 
-**Prevention:**
-- The message queue command payload MUST include `idempotency_key` (same format as gRPC: `{saga:ORDER_ID}:step:OPERATION:ENTITY_ID`)
-- The message queue consumer handler must call the exact same Lua scripts the gRPC handler calls. Extract the business logic into shared functions that both gRPC and message queue handlers invoke
-- ACK after processing (at-least-once delivery), relying on Lua idempotency for exactly-once execution. This is the same pattern the existing SAGA compensation consumer already uses
-- Do NOT attempt at-most-once delivery (ACK before processing). Redis Streams consumer groups do not guarantee at-most-once under crashes -- XAUTOCLAIM will redeliver unACKed messages
+**Phase to address:**
+Phase 1 (engine design) and Phase 2 (checkout rewrite). Verify with existing idempotency tests.
 
-**Phase:** Phase 1 -- message queue handler implementation. Must be designed alongside gRPC handler refactoring.
+---
+
+### P6 -- Silently Dropping Circuit Breaker Errors in Engine Step Execution
+
+**What goes wrong:**
+`run_checkout()` propagates `CircuitBreakerError` explicitly: it catches the error at the outer `try/except`, sets `COMPENSATING` state, and runs compensation. If the workflow engine wraps step execution in a generic `try/except Exception` that converts all exceptions to step-failure results, `CircuitBreakerError` is silently downgraded to a regular step failure. The engine retries the step (via `retry_forward`) even though the circuit is open. This causes unnecessary retry attempts against a failing service and delays compensation.
+
+**Why it happens:**
+Generic step executors catch broad exceptions. The developer does not realize that `CircuitBreakerError` is semantically different from a recoverable RPC failure — it means "this service is down, do not retry, compensate immediately."
+
+**How to avoid:**
+The engine's step executor must propagate `CircuitBreakerError` immediately, identical to how `retry_forward()` does: `except CircuitBreakerError: raise`. The engine's compensation trigger must distinguish between "step returned failure result" (retry is OK) and "CircuitBreakerError raised" (compensate immediately, no retry). The existing `retry_forward()` function already encodes this logic — the engine should call it rather than reimplement its retry/exception handling.
+
+**Warning signs:**
+- Engine step executor has a bare `except Exception as e: return StepResult(success=False, error=str(e))`
+- `CircuitBreakerError` is not imported in the engine module
+- Under kill-tests, the compensation path is not triggered when the circuit is open
+
+**Phase to address:**
+Phase 1 (engine step executor design).
 
 ---
 
 ## High Severity Pitfalls
 
-### P6 -- Reply Stream Hash Slot Mismatch in Redis Cluster
+### P7 -- Refactoring Breaks gRPC/Queue Transport Toggle
 
-**What goes wrong:** Redis Streams used for inter-service communication must be accessible by both producer and consumer. In Redis Cluster, the stream lives on whichever node owns its hash slot. The orchestrator writes to `{stock:commands}` (slot determined by `stock`), Stock reads from it, processes, and writes to `{orchestrator:replies}` (slot determined by `orchestrator`). This works fine -- the stream names hash to predictable slots.
+**What goes wrong:**
+The `transport.py` adapter provides a clean interface that `grpc_server.py` uses regardless of `COMM_MODE`. The checkout rewrite inside the workflow engine must continue to import from `transport` (not directly from `client` or `queue_client`). If the engine module imports `from client import reserve_stock` directly — because the developer is testing with gRPC and forgets the abstraction — the queue transport path silently breaks. The `COMM_MODE=queue` benchmark configuration starts failing.
 
-BUT: if you use per-transaction reply streams like `reply:ORDER_ID` without hash tags, each reply stream lands on a different slot. The orchestrator must now XREAD from streams on different nodes. Worse: if the orchestrator creates a consumer group on a reply stream, but that stream's slot migrates during cluster rebalancing, the consumer group state is on the old node.
+**How to avoid:**
+The engine and checkout workflow definition must only import transport functions from `transport.py`. This is a one-line rule: `from transport import reserve_stock, charge_payment, ...` — never from `client` or `queue_client` directly. Enforce this with a comment in `transport.py` or a module-level assertion.
 
 **Warning signs:**
-- Reply stream names without hash tags (e.g., `reply:abc123` instead of `{orchestrator:replies}`)
-- `CROSSSLOT` errors when trying to read from multiple reply streams in one XREAD call
-- Stream counts growing unboundedly because per-transaction streams are never deleted
-- MOVED errors during cluster rebalancing that cause missed replies
+- `from client import ...` in `workflow.py` or `engine.py`
+- Tests only run with default `COMM_MODE=grpc`
+- Queue integration tests fail after checkout rewrite
 
-**Prevention:**
-- Use a shared reply stream with hash tag: `{orchestrator:replies}` -- all replies go to one stream on one slot
-- Differentiate replies using correlation IDs in the message fields, not separate streams
-- If you must use per-transaction reply streams, use hash tags: `{orchestrator}:reply:ORDER_ID` -- all streams hash to the same slot as `orchestrator`
-- XREAD can block on only one stream at a time per call anyway (unless you pass multiple stream names). With a single shared reply stream, this is a non-issue
-
-**Phase:** Phase 1 -- message queue architecture design.
+**Phase to address:**
+Phase 2 (checkout rewrite). Simple rule, easy to miss.
 
 ---
 
-### P7 -- 2PC Participant Timeout Causing Silent Resource Leak
+### P8 -- The "Interview-Ready" Refactoring That Makes the System Harder to Read
 
-**What goes wrong:** A participant receives PREPARE and votes COMMIT, reserving resources (stock held, credit held). The coordinator decides ABORT (e.g., the other participant voted ABORT) and sends ABORT to all participants. But the network drops the ABORT message to one participant. That participant holds the reservation forever.
+**What goes wrong:**
+Refactoring for "clarity and maintainability" introduces layers of abstraction that make the system harder to understand without knowing the engine abstraction. An interviewer reading `grpc_server.py` can currently trace the entire checkout flow in one file: create record, reserve stock, charge payment, compensate, done. After the refactoring, the flow is: `engine.execute(checkout_workflow, ctx)` — and you need to read `engine.py`, `workflow.py`, `checkout.py`, and `WorkflowStep` to understand what happens. For a course evaluation, this can look over-engineered rather than thoughtful.
 
-With gRPC, the participant would eventually get a timeout on the coordinator connection and could infer something is wrong. With Redis Streams, there is no connection to time out -- the participant is passively reading from a stream. If the ABORT message is lost (e.g., the stream was trimmed before the participant read it), the participant never learns the decision.
+**How to avoid:**
+The abstraction should make the checkout definition MORE readable, not less. A good checkout workflow definition reads like pseudocode: steps defined inline, compensations co-located with actions, the engine calling convention obvious. Keep the engine API surface minimal so it requires no preamble to understand. The goal is that `checkout_workflow` can be read and understood by someone who has never seen the engine. Add inline comments explaining the SAGA/2PC execution model at the registration site, not in the engine internals.
 
 **Warning signs:**
-- No timeout on participant's PREPARED state
-- MAXLEN trimming on command streams that could discard unread COMMIT/ABORT messages
-- No participant-side polling of transaction outcome
-- Resources held indefinitely after coordinator crash or message loss
-- Kill-test shows stock reserved but never committed or released
+- `checkout_workflow` is defined across multiple files with no single readable definition
+- Step names are generic (`step_1`, `step_2`) rather than descriptive (`reserve_stock`, `charge_payment`)
+- The engine has more abstraction than the checkout has steps
 
-**Prevention:**
-- Participants must have a PREPARED-state timeout. If no COMMIT or ABORT arrives within N seconds, the participant queries the coordinator's transaction record in Redis (`{saga:ORDER_ID}` hash) to read the decision directly
-- Alternatively, have participants poll a dedicated decision stream/key. The coordinator writes the decision to `{2pc:ORDER_ID}:decision` which participants can read independently of the command stream
-- Never use MAXLEN trimming on command streams that carry COMMIT/ABORT messages for in-flight transactions. Trim only after all participants have ACKed
-- The participant timeout should be longer than the coordinator restart time (to give the coordinator time to recover and resend)
-
-**Phase:** Phase 2 -- 2PC fault tolerance hardening. Initial implementation can assume reliable delivery, but kill-tests will expose this.
+**Phase to address:**
+Phase 2 (checkout rewrite) and Phase 3 (refactoring). Evaluate readability explicitly before marking phase complete.
 
 ---
 
-### P8 -- Message Queue Backpressure: Stock Service Overwhelmed by Queued Commands
+### P9 -- Startup Recovery Does Not Use the Engine to Resume Workflows
 
-**What goes wrong:** With gRPC, the orchestrator waits for a response before sending the next request -- natural backpressure through synchronous request-reply. With message queues, the orchestrator can fire N commands into the stream without waiting. If the stock service is slow or temporarily down, commands pile up. When it recovers, it processes a burst of stale commands. Some may reference resources that no longer exist or transactions that already timed out and were compensated.
+**What goes wrong:**
+The recovery scanner in `recovery.py` currently calls `run_checkout()` steps directly to resume partial SAGAs. After the refactoring, if checkout steps are defined in the workflow engine, the recovery scanner still calls the old `resume_saga()` function which hardcodes the step sequence. The engine and the recovery path diverge. A refactoring that changes step order, adds a step, or changes step names will fix the engine path but silently leave the recovery path using the old sequence. The next kill-test uses the recovery path and fails.
+
+**How to avoid:**
+The recovery scanner must call the engine's execution path, not `resume_saga()` directly. Specifically: `resume_saga()` should be refactored to call `engine.execute(checkout_workflow, ctx, resume_from=current_state)` with a resume-from-state capability. If the engine does not support resume-from-state (reasonable for a 6-day scope), then the simplest safe approach is to keep `resume_saga()` as-is and ensure it is updated atomically with any changes to the checkout workflow steps. Document this coupling explicitly with a comment.
 
 **Warning signs:**
-- Stream length (`XLEN`) growing during load spikes
-- Consumer lag increasing (visible in `XPENDING` output)
-- Processing stale commands that reference already-failed transactions
-- CPU spike on stock/payment service when it catches up after downtime
-- Orchestrator timeout fires before the participant processes the command, causing double-execution (orchestrator retries while original is still in queue)
+- `recovery.py` still references step names/functions that no longer exist in the engine-based checkout path
+- Recovery is tested with a hardcoded state sequence but checkout is tested through the engine
+- A new step is added to the checkout workflow but not added to the resume logic
 
-**Prevention:**
-- Even with message queues, the orchestrator should wait for each reply before sending the next command in a transaction. This is request-reply over streams, not fire-and-forget. The queue decouples transport, not the protocol
-- Monitor stream length and consumer lag in the health endpoint (extend existing `/health` which already reports consumer lag)
-- Set MAXLEN on command streams to prevent unbounded growth, but ensure it is large enough that commands are not trimmed before consumption
-- Add a `created_at` timestamp to command messages. Consumers should check message age and skip commands older than the transaction timeout (they have already been compensated)
-- Circuit breaker on the producer side: if the stream length exceeds a threshold, the orchestrator should fail fast rather than adding to the backlog
-
-**Phase:** Phase 2 -- load testing and performance tuning.
+**Phase to address:**
+Phase 2 (checkout rewrite). The recovery path integration must be explicitly addressed, not assumed.
 
 ---
 
-### P9 -- Dual Communication Path Toggle Creating Untestable Combinations
+### P10 -- Breaking the 37 Integration Tests by Changing Behavior, Not Just Structure
 
-**What goes wrong:** The v2.0 spec requires env var toggles for both transaction pattern (SAGA/2PC) and communication mode (gRPC/message queue). This creates 4 combinations: SAGA+gRPC (existing), SAGA+queue, 2PC+gRPC, 2PC+queue. Each combination has different failure modes, timing characteristics, and recovery behaviors. If each path is independently tested but combinations are not, the 2PC+queue combination (which has never existed before) will have integration bugs discovered only during the benchmark.
+**What goes wrong:**
+The refactoring is structural — the checkout behavior must not change. But if the engine introduces a different retry policy, different error message format, different state transition timing, or different flag-setting sequence, existing tests can fail. More subtly: tests that mock `run_checkout` directly will need to mock `engine.execute` instead, which may have a different signature or call chain.
+
+**How to avoid:**
+Run the full 37-test suite after every meaningful change during the refactoring, not just at the end. The test suite is the regression guard. If a test fails, treat it as a bug in the refactoring (behavior changed) not a problem with the test. The only acceptable test changes are signature updates for mocking the new engine interface — never relaxing assertions.
 
 **Warning signs:**
-- Tests structured as "test SAGA" and "test 2PC" separately, with communication mode hardcoded
-- Toggle implemented as top-level if/else that duplicates the entire checkout flow
-- One combination works reliably in dev but fails in CI because the CI env vars default differently
-- Recovery scanner tested only with the default toggle values
+- Any test failures during the refactoring treated as "I'll fix this later"
+- Mock patches changed from `grpc_server.run_checkout` to `engine.execute` with weakened assertions
+- Tests skipped or commented out during development
 
-**Prevention:**
-- Design the orchestrator with a clean abstraction: a `TransactionCoordinator` interface with `saga_coordinator` and `tpc_coordinator` implementations, and a `ServiceClient` interface with `grpc_client` and `queue_client` implementations. The coordinator uses the client interface, so all 4 combinations work through the same code paths
-- Run the full integration test suite (all 37 existing tests) against ALL 4 combinations in CI. This is a matrix build, not optional
-- Test recovery (kill-test) for each combination separately -- SAGA recovery and 2PC recovery have different semantics
-- Default to the existing combination (SAGA+gRPC) in production/benchmark to preserve the known-working path. Only switch after the new combination passes all tests
-
-**Phase:** Spans all phases -- but the abstraction design must happen in Phase 1.
+**Phase to address:**
+All phases. Continuous, not just at the end.
 
 ---
 
 ## Moderate Pitfalls
 
-### P10 -- 2PC Holding Locks Longer Than SAGA (Latency Impact Under 20 CPU Budget)
+### P11 -- New `workflow.py` Module With Circular Imports
 
-**What goes wrong:** SAGA executes steps sequentially: reserve stock, charge payment, done. Each step takes ~5ms (gRPC roundtrip). Total lock time per resource: ~5ms. 2PC sends PREPARE to all participants simultaneously, waits for all VOTE responses, then sends COMMIT. The resource is held from PREPARE through COMMIT -- minimum 2 roundtrips. With message queues (higher latency than gRPC), this hold time increases further.
+**What goes wrong:**
+The orchestrator already has circular import risks: `grpc_server.py` imports from `recovery.py` (via `run_compensation`), and `recovery.py` imports from `grpc_server.py`. A new `engine.py` or `workflow.py` that imports from `grpc_server.py` (to reuse `retry_forward`, `run_compensation`) while `grpc_server.py` imports from `engine.py` creates a circular import that fails at startup.
 
-Under the 20 CPU benchmark, longer resource hold times mean more contention, more CAS retries, and lower throughput. The benchmark measures total checkout throughput -- 2PC may be measurably slower.
-
-**Prevention:**
-- Accept that 2PC will have higher latency than SAGA for the same workload. This is inherent to the protocol, not a bug
-- Optimize the prepare-commit gap: batch the PREPARE messages and read replies concurrently (asyncio.gather on XREAD calls)
-- Keep the gRPC path as the performance-optimized option; document that the message queue path trades latency for decoupling
-- Benchmark both configurations and report the tradeoff in the architecture document (this is valuable for the course evaluation)
-
-**Phase:** Phase 3 -- performance testing and optimization.
-
----
-
-### P11 -- Redis Streams Consumer Group Name Collision With Existing Consumers
-
-**What goes wrong:** The existing system has two consumer groups on `{saga:events}:checkout`: `compensation-handler` and `audit-logger`. If the new message queue communication adds consumer groups on the same stream (e.g., for routing stock/payment commands), or creates new streams with conflicting group names, existing consumers may start receiving messages they do not understand.
-
-More subtly: if the new command/reply streams use the same consumer group infrastructure (XGROUP_CREATE, XREADGROUP), but with different semantics (commands need exactly-one-consumer delivery vs. events need broadcast), mismatched group configuration causes either message duplication or message loss.
+**How to avoid:**
+Move shared utilities (`retry_forward`, `retry_forever`, `run_compensation`) to a dedicated module (e.g., `coordinator.py` or `retry.py`) that has no upward imports. Both the engine and `grpc_server.py` import from this shared module. The existing circular import between `grpc_server.py` and `recovery.py` (resolved via deferred local imports) is a warning that the import graph needs care.
 
 **Warning signs:**
-- New consumer groups created on existing event streams
-- Existing `compensation_consumer` receiving command messages instead of events
-- BUSYGROUP errors on startup because group already exists with different stream
-- Event consumers and command consumers sharing group names across different streams
+- `ImportError: cannot import name X from partially initialized module`
+- Deferred imports (`from grpc_server import Y` inside a function body) to work around circular imports in the new modules
+- More than two levels of import indirection to call a utility function
 
-**Prevention:**
-- Keep event streams (`{saga:events}:checkout`) completely separate from command/reply streams (`{stock:commands}`, `{payment:commands}`, `{orchestrator:replies}`)
-- Use descriptive, namespaced group names: `stock-cmd-processor`, `payment-cmd-processor` -- not generic names like `worker` or `consumer`
-- Command streams should use consumer groups with a single consumer per service instance (ensures each command is processed once). Event streams can have multiple groups (fan-out to multiple consumers)
-- Document the stream topology: which streams exist, which groups consume from each, and what message schemas each carries
-
-**Phase:** Phase 1 -- stream topology design.
+**Phase to address:**
+Phase 1 (module structure design).
 
 ---
 
-### P12 -- Forgetting to Propagate Idempotency Keys Through the Message Queue Envelope
+### P12 -- Engine State Storage Namespace Collision With Existing Keys
 
-**What goes wrong:** The existing gRPC protos define `idempotency_key` as an explicit field on each request message (e.g., `ReserveStockRequest.idempotency_key`). When wrapping these operations in Redis Streams messages, the idempotency key must be serialized into the stream entry fields. If the message envelope schema is designed separately from the gRPC proto, the idempotency key gets lost in translation.
+**What goes wrong:**
+If the engine introduces its own Redis keys (e.g., `workflow:ORDER_ID`, `engine:step:ORDER_ID:N`) without careful hash tag design, these keys land on unpredictable Redis Cluster slots. More critically, if the engine uses a key like `{saga:ORDER_ID}:workflow` alongside the existing `{saga:ORDER_ID}` hash, and the recovery scanner scans `{saga:*}`, it will hit the new key and try to decode it as a SAGA hash, causing decode errors or silent skips.
 
-In this codebase: the orchestrator's `client.py` constructs idempotency keys like `{saga:ORDER_ID}:step:reserve:ITEM_ID` and passes them as gRPC request fields. The message queue equivalent must carry the same key in the same format.
+**How to avoid:**
+The safest approach is to store all engine-managed state inside the existing `{saga:ORDER_ID}` or `{tpc:ORDER_ID}` hash (adding new fields, not new keys). If new keys are needed, use `{saga:ORDER_ID}:engine:*` with the same hash tag so they live on the same slot, and update the recovery scanner's scan pattern to explicitly skip these keys.
 
 **Warning signs:**
-- Message queue command schema defined without looking at the gRPC proto fields
-- Participant message handler that generates a NEW idempotency key instead of using the one from the message
-- Different idempotency key formats between gRPC and message queue paths (making it impossible to switch mid-transaction)
+- `hgetall` in recovery scanner silently failing on engine-format keys
+- `CROSSSLOT` errors in Redis logs
+- New key format without a hash tag
 
-**Prevention:**
-- Define the message queue command schema as a superset of the gRPC request fields. Every field in the proto must appear in the stream entry
-- The `client.py` abstraction should generate the idempotency key once, and both gRPC and message queue paths use the same key
-- Write a test that starts a transaction over gRPC, kills the orchestrator, restarts with message queue mode, and verifies the same idempotency keys are used for recovery retries
-
-**Phase:** Phase 1 -- message schema design.
+**Phase to address:**
+Phase 1 (engine design).
 
 ---
 
-### P13 -- 2PC ABORT After Partial PREPARE (Not All Participants Responded)
+### P13 -- Inconsistent Step Names Between Engine Registration and Redis Idempotency Keys
 
-**What goes wrong:** The orchestrator sends PREPARE to Stock and Payment. Stock responds VOTE_COMMIT. Payment never responds (crash, network partition, or message queue delay). The orchestrator times out and decides ABORT. It sends ABORT to Stock (which releases its reservation) and ABORT to Payment. But Payment never received PREPARE -- so it has nothing to abort. Later, Payment recovers and reads the original PREPARE from the stream (messages persist in Redis Streams). It processes PREPARE, votes COMMIT, and waits for COMMIT that will never come.
+**What goes wrong:**
+The existing idempotency key format is `{saga:ORDER_ID}:step:reserve:ITEM_ID`. This format is hardcoded in `grpc_server.py`, `recovery.py`, and `run_checkout()`. If the workflow engine uses its own step naming convention (e.g., `step_0`, `step_1` or `reserve-stock`), and the engine auto-generates idempotency keys from step names, the generated keys will not match the format the stock/payment services expect. The Lua idempotency check in participants looks up a specific key format — a mismatch means idempotency is not enforced.
+
+**How to avoid:**
+The checkout workflow step definitions must specify the exact idempotency key format, not let the engine generate it from step names. Either pass the idempotency key as part of the step context, or have the engine call the action callable with the idempotency key as a parameter constructed outside the engine. The engine should not own idempotency key construction.
 
 **Warning signs:**
-- No TTL or expiry on stream messages, causing stale PREPAREs to be processed after abort
-- Participant processes PREPARE without checking if the transaction has already been decided
-- ABORT sent to a participant that never received PREPARE -- harmless but confusing in logs
-- Recovered participant holds resources indefinitely (same as P7)
+- Engine constructs idempotency keys from step index or step name
+- Participant-side idempotency check never matches any engine-generated key
+- Duplicate stock decrements under retry (idempotency not working)
 
-**Prevention:**
-- Before processing a PREPARE message, the participant should check the transaction's decision record in Redis (`{saga:ORDER_ID}` hash). If the record shows ABORTED, skip the PREPARE entirely
-- Add a `created_at` timestamp to PREPARE messages. Participants should reject PREPAREs older than the transaction timeout
-- The coordinator should record which participants were sent PREPARE and which responded, so ABORT is only sent to participants that actually received PREPARE
-- Combine with P7's participant timeout: even if a stale PREPARE is processed, the participant timeout will trigger a decision lookup and release resources
-
-**Phase:** Phase 2 -- 2PC fault tolerance. This is a nuanced failure mode that surfaces in kill-tests.
+**Phase to address:**
+Phase 2 (checkout workflow registration).
 
 ---
 
-### P14 -- Message Queue Latency Variance Breaking Circuit Breaker Thresholds
+### P14 -- Codebase Refactoring Changing Observable Behavior Under Benchmark
 
-**What goes wrong:** The existing circuit breaker on gRPC calls has a 5-second timeout (`RPC_TIMEOUT = 5.0`). gRPC latency is predictable (~1-5ms per call). Redis Streams latency is less predictable: XREAD BLOCK has polling intervals (currently `POLL_INTERVAL_MS = 2000`), consumer processing time adds to the response latency, and stream backlog under load can add seconds of delay. If the orchestrator keeps the same 5-second timeout for message queue responses, it will false-trigger under normal load variations.
+**What goes wrong:**
+The "refactoring for clarity" part of v3.0 includes renaming functions, reorganizing modules, and cleaning up inconsistencies. Under a 6-day deadline, refactoring + feature addition simultaneously is risky. A variable rename that accidentally changes a Redis key format (e.g., changing `saga_key = f"{{saga:{order_id}}}"` to use a helper function that formats differently) breaks every Redis operation silently. The benchmark runs fine in dev (fresh Redis) but consistency violations appear because old in-flight records use the old key format.
+
+**How to avoid:**
+Refactoring and feature addition should be in separate commits/phases, not interleaved. Refactor first, verify with full test suite, commit. Then add the engine. If under time pressure, defer non-critical refactoring entirely — the engine abstraction IS the refactoring for interview purposes.
 
 **Warning signs:**
-- Circuit breaker opening under moderate load when using message queue path (but not gRPC path)
-- High timeout rate on message queue path compared to gRPC
-- Transactions failing with "service unavailable" when services are actually healthy but slow to consume
-- Inconsistent latency between first message (stream is empty, XREAD blocks full interval) and subsequent messages
+- Commits that mix engine additions and variable renames
+- Redis key string constants changed during "cleanup" without a grep for all usages
+- Test suite passes but benchmark shows new consistency violations
 
-**Prevention:**
-- Use different timeout values for gRPC and message queue paths. gRPC: keep 5s. Message queue: set to 10-15s to account for polling interval + processing time
-- The circuit breaker should be scoped per-communication-mode, not per-target-service. A gRPC circuit breaker should not trip based on message queue failures and vice versa
-- Monitor actual p99 latency for message queue request-reply during load testing and set the timeout to p99 + generous margin
-- Consider that message queue latency has a floor of POLL_INTERVAL_MS (the consumer checks for new messages every N ms). Set poll interval to 100-500ms for command streams, not the 2000ms used for event streams
-
-**Phase:** Phase 2 -- integration testing and tuning.
+**Phase to address:**
+Phase 3 (refactoring). Keep it separate from Phase 1-2 (engine).
 
 ---
 
-## Minor Pitfalls
+## Technical Debt Patterns
 
-### P15 -- Stream Naming Convention Inconsistency With Existing Hash Tag Patterns
-
-**What goes wrong:** The existing codebase uses hash tags carefully: `{saga:ORDER_ID}` for SAGA records, `{item:UUID}` for stock, `{user:UUID}` for users. All hash tags are designed so related keys land on the same Redis Cluster slot. If new streams use different hash tag patterns or no hash tags at all, the streams end up on unpredictable slots. This does not cause correctness issues but makes monitoring, debugging, and cluster capacity planning harder.
-
-**Prevention:**
-- Follow the existing convention. Command streams: `{stock:commands}`, `{payment:commands}`. Reply streams: `{orchestrator:replies}`. Event streams: `{saga:events}:STREAM_NAME` (already established)
-- Document the full key namespace in the architecture doc
-
-**Phase:** Phase 1 -- convention during stream design.
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Engine only supports SAGA (not 2PC) | 3 days faster, simpler engine | 2PC path bypasses engine, inconsistent architecture | Only if 2PC checkout is re-registered as a workflow before demo |
+| Keep `run_checkout()` and add engine as a thin wrapper | Minimal refactoring risk | Engine is cosmetic, not structural — hard to explain in interview | Acceptable if deadline is the binding constraint |
+| Engine does not support resume-from-state | Avoids complex engine state tracking | Recovery scanner cannot use engine path; must maintain dual paths | Acceptable if documented and recovery scanner stays in sync manually |
+| Skip refactoring, only add engine | Saves 1-2 days | Codebase remains inconsistent, lower code quality score | Acceptable given 6-day deadline — engine feature is higher value |
+| Hardcode checkout step list in engine rather than registration API | 30 min vs 2 hours for full registration | Not reusable, but reusability is irrelevant for a course project | Acceptable — YAGNI applies strongly here |
 
 ---
 
-### P16 -- Rolling Deploy With Mixed Protocol Versions
+## Integration Gotchas
 
-**What goes wrong:** During a rolling deploy from v1.0 (SAGA+gRPC only) to v2.0 (SAGA/2PC toggle + gRPC/queue toggle), old pods run the v1.0 code that does not understand 2PC state records or message queue commands. If the deployment is not properly staged, old and new orchestrator pods may coexist briefly. An old pod picks up a 2PC record from the recovery scanner and applies SAGA recovery logic, corrupting the transaction.
-
-**Prevention:**
-- The orchestrator runs as a single replica -- rolling deploy replaces one pod with one pod. There is no overlap if `maxSurge=0` (already configured)
-- BUT: verify that Kubernetes actually waits for the old pod to terminate before starting the new one. With `maxSurge=0` and `maxUnavailable=1`, this is guaranteed
-- Add the `protocol` field check in recovery scanner defensively even for v1.0 backfill: existing records without a `protocol` field default to `saga`
-
-**Phase:** Phase 3 -- deployment and testing.
-
----
-
-## Phase-Specific Warnings
-
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| 2PC state machine design | P1: Coordinator crash between phases, P4: Mixed SAGA/2PC states | Write decision to Redis BEFORE sending phase-2 messages; separate state machine per protocol |
-| 2PC participant handlers | P2: Paper vote without reservation, P7: Silent resource leak | PREPARE must actually reserve; add participant-side decision timeout |
-| Message queue architecture | P3: Request-reply correlation, P6: Hash slot mismatch | Shared reply stream with correlation IDs and hash tags |
-| Message queue handlers | P5: Lost idempotency, P12: Key propagation | Same Lua scripts, same idempotency keys, shared handler functions |
-| Integration/toggle design | P9: Untestable combinations, P4: Mixed state contamination | Clean interface abstraction; CI matrix testing all 4 combinations |
-| Fault tolerance (kill-test) | P1: Coordinator crash, P7: Participant timeout, P13: Stale PREPARE | WAL in Redis, participant decision polling, message age checks |
-| Performance tuning | P10: 2PC lock duration, P8: Queue backpressure, P14: Circuit breaker thresholds | Different timeouts per communication mode; accept 2PC latency tradeoff |
-| Deployment | P16: Mixed protocol versions, P11: Consumer group collision | Single-replica orchestrator with maxSurge=0; namespaced stream/group names |
+| Integration Point | Common Mistake | Correct Approach |
+|-------------------|----------------|------------------|
+| `transition_state()` via engine | Engine calls `HSET state X` directly | Always call `transition_state()` or `transition_tpc_state()` — Lua CAS is mandatory |
+| `transport.py` via checkout workflow | Direct `from client import reserve_stock` | Always `from transport import reserve_stock` — preserves COMM_MODE toggle |
+| `recovery.py` after checkout rewrite | Scanner calls old `resume_saga()` with hardcoded steps | Either update `resume_saga()` to call engine, or explicitly sync it with engine steps |
+| `run_compensation()` from engine | Engine calls `run_compensation()` as a black box | Compensation must read the same per-step flags (`payment_charged`, `stock_reserved`) the existing code uses |
+| `retry_forward()` / `retry_forever()` from engine | Engine reimplements retry with different `CircuitBreakerError` handling | Reuse existing retry functions — their `CircuitBreakerError` propagation is load-bearing |
+| Idempotency key generation | Engine generates keys from step names | Keys must be constructed explicitly in the format participants expect |
 
 ---
 
-## Summary Table
+## "Looks Done But Isn't" Checklist
 
-| # | Pitfall | Severity | Category | Phase |
-|---|---------|----------|----------|-------|
-| P1 | 2PC coordinator crash between prepare and commit | Critical | 2PC | Phase 1 |
-| P2 | Participant PREPARE without actual resource reservation | Critical | 2PC | Phase 1 |
-| P3 | Request-reply correlation and timeout over Redis Streams | Critical | Message Queue | Phase 1 |
-| P4 | Mixed SAGA/2PC state machine contamination | Critical | Integration | Phase 1 |
-| P5 | Message queue handlers losing idempotency guarantees | Critical | Message Queue | Phase 1 |
-| P6 | Reply stream hash slot mismatch in Redis Cluster | High | Message Queue | Phase 1 |
-| P7 | 2PC participant timeout causing silent resource leak | High | 2PC | Phase 2 |
-| P8 | Message queue backpressure overwhelming participants | High | Message Queue | Phase 2 |
-| P9 | Dual toggle creating untestable 4-combination matrix | High | Integration | All |
-| P10 | 2PC longer lock duration impacting benchmark throughput | Moderate | 2PC | Phase 3 |
-| P11 | Consumer group name collision with existing streams | Moderate | Message Queue | Phase 1 |
-| P12 | Idempotency key not propagated through message envelope | Moderate | Message Queue | Phase 1 |
-| P13 | Stale PREPARE processed after transaction already aborted | Moderate | 2PC | Phase 2 |
-| P14 | Message queue latency variance breaking circuit breaker | Moderate | Message Queue | Phase 2 |
-| P15 | Stream naming inconsistency with existing hash tag patterns | Minor | Message Queue | Phase 1 |
-| P16 | Rolling deploy with mixed protocol versions | Minor | Deployment | Phase 3 |
+- [ ] **Engine state persistence:** Does every state transition go through `transition_state()` / `transition_tpc_state()` with Lua CAS? Verify by reading `engine.py` for any `HSET` calls on state fields.
+- [ ] **Recovery scanner coverage:** Does `recover_incomplete_sagas()` and `recover_incomplete_tpc()` still find and resume engine-managed workflows? Test by running kill-test with COMM_MODE=grpc and COMM_MODE=queue.
+- [ ] **Compensation via engine:** Does the engine compensation path correctly call `run_compensation()` with the same partial-reservation data (`reserved_items_json`) as before? Kill-test after step-1 completion.
+- [ ] **Exactly-once via HSETNX:** Does the engine path still use `create_saga_record()` / `create_tpc_record()` with HSETNX? Send two concurrent checkout requests with the same `order_id` — only one should succeed.
+- [ ] **Transport abstraction intact:** Does `COMM_MODE=queue` still work after checkout rewrite? Run one test in each mode.
+- [ ] **37 tests passing:** Run `pytest tests/` with zero failures after every major commit.
+- [ ] **Benchmark 0 violations:** Run the benchmark after the engine is wired end-to-end before any refactoring.
+- [ ] **Kill-test passes:** Kill the orchestrator mid-checkout after engine rewrite and verify recovery lands in COMPLETED or FAILED, never stuck.
+- [ ] **Circuit breaker propagation:** Verify `CircuitBreakerError` from a step triggers immediate compensation, not retry. Mock a tripped breaker and check the code path.
+
+---
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| P1: Lua CAS bypassed | HIGH | Identify all `HSET state` calls in engine, replace with `transition_state()` calls, re-run kill-tests. May require Redis data cleanup if corruption occurred. |
+| P2: Recovery scanner blind to engine records | MEDIUM | Add engine key pattern to scan in `recovery.py`, run kill-test to verify. Low risk if addressed before benchmark. |
+| P3: Compensation detached from engine | HIGH | Redefine `WorkflowStep` to include `compensation` callables, refactor `run_compensation()` to use them. Re-run all tests + kill-test. |
+| P4: Over-engineered engine (time lost) | HIGH | Scope-cut to minimal engine wrapper: delete non-essential engine features, reduce to step list + executor. Accept technical debt on unused abstractions. |
+| P5: Exactly-once broken | HIGH | Identify conflicting idempotency mechanism, consolidate to HSETNX guard, run concurrent-request test. May need Redis key cleanup. |
+| P7: Transport toggle broken | LOW | Find direct client imports in engine/workflow files, replace with transport imports, run both COMM_MODE tests. |
+| P10: Integration tests broken | MEDIUM | Treat each failure as a behavior regression, not a test problem. Revert the change that broke it, re-implement more carefully. |
+
+---
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| P1: Lua CAS atomicity lost | Phase 1 (engine design) | Code review: no raw `HSET` on state field in engine code |
+| P2: Recovery scanner blindness | Phase 1 (engine design) | Kill-test: orchestrator restart with in-flight engine-managed workflow resolves to terminal state |
+| P3: Compensation detached | Phase 1 (engine API design) | Kill-test: orchestrator kill after step 1 completes triggers correct compensation |
+| P4: Over-abstracting (scope creep) | Phase 1 (scope cap) | LOC check: engine module < 300 lines before checkout registration |
+| P5: Exactly-once broken | Phase 1 + Phase 2 | Concurrent request test: two requests with same order_id, only one SAGA record created |
+| P6: CircuitBreaker swallowed | Phase 1 (step executor) | Mock test: tripped breaker triggers compensation not retry |
+| P7: Transport toggle broken | Phase 2 (checkout rewrite) | Integration test: full checkout in COMM_MODE=queue passes |
+| P8: Abstraction hurts readability | Phase 2 + Phase 3 | Manual review: checkout_workflow readable without engine knowledge |
+| P9: Recovery uses old step sequence | Phase 2 (checkout rewrite) | Kill-test: kill after every possible SAGA state, verify recovery |
+| P10: Integration tests broken | All phases (continuous) | CI: `pytest tests/` green after every commit |
+| P11: Circular imports | Phase 1 (module structure) | `python -c "import engine"` succeeds with no import errors |
+| P12: Key namespace collision | Phase 1 (engine design) | No new top-level Redis key prefixes; check `scan_iter` patterns in recovery |
+| P13: Idempotency key mismatch | Phase 2 (checkout registration) | Retry test: duplicate step execution does not double-decrement stock |
+| P14: Refactoring changes behavior | Phase 3 (refactoring) | Benchmark immediately after refactoring: 0 consistency violations |
 
 ---
 
 ## Sources
 
-- [Martin Fowler - Two-Phase Commit Pattern](https://martinfowler.com/articles/patterns-of-distributed-systems/two-phase-commit.html)
-- [Redis Streams Official Documentation](https://redis.io/docs/latest/develop/data-types/streams/)
-- [Redis Microservices Interservice Communication Tutorial](https://redis.io/learn/howtos/solutions/microservices/interservice-communication)
-- [GeeksforGeeks - Recovery from Failures in 2PC](https://www.geeksforgeeks.org/dbms/recovery-from-failures-in-two-phase-commit-protocol-distributed-transaction/)
-- [Baeldung - 2PC vs SAGA Pattern](https://www.baeldung.com/cs/two-phase-commit-vs-saga-pattern)
-- [Princeton CS - 2PC Lecture Notes](https://www.cs.princeton.edu/courses/archive/fall16/cos418/docs/L6-2pc.pdf)
-- [Wikipedia - Two-Phase Commit Protocol](https://en.wikipedia.org/wiki/Two-phase_commit_protocol)
-- [OneUptime - Reliable Message Queues with Redis Streams](https://oneuptime.com/blog/post/2026-01-21-redis-streams-message-queues/view)
+- Direct codebase analysis: `/orchestrator/saga.py`, `tpc.py`, `grpc_server.py`, `recovery.py`, `transport.py`, `app.py`
+- [Temporal Workflow Engine Design Principles](https://temporal.io/blog/workflow-engine-principles) — what a real workflow engine needs to handle
+- [Microservices.io SAGA Pattern](https://microservices.io/patterns/data/saga.html) — compensation and consistency guarantees
+- [Workflow Engine Design Proposal](https://www.architecture-weekly.com/p/workflow-engine-design-proposal-tell) — common over-engineering traps
+- [Code Refactoring: When to Refactor and How to Avoid Mistakes](https://www.tembo.io/blog/code-refactoring) — refactoring + feature addition concurrently
+- [Workflow Design Anti-Patterns](https://docs.fluentcommerce.com/essential-knowledge/workflow-design-anti-patterns) — abstraction complexity traps
+- v2.0 PITFALLS.md (2026-03-12) — existing consistency guarantees to preserve
 
-*Research: 2026-03-12 -- v2.0 milestone pitfalls for DDS26-8*
+---
+*Pitfalls research for: abstract workflow engine layer over existing SAGA/2PC orchestrator*
+*Researched: 2026-03-26 — v3.0 milestone for DDS26-8*

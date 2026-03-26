@@ -1,689 +1,549 @@
-# Architecture Patterns
+# Architecture Research
 
-**Domain:** 2PC and Redis Streams request/reply messaging for distributed checkout system
-**Researched:** 2026-03-12
-**Context:** v2.0 milestone -- adding 2PC as alternative transaction pattern and Redis Streams message queues as default inter-service communication to existing SAGA+gRPC system
-
----
-
-## Current Architecture (v1.0 Baseline)
-
-```
-Client -> Nginx -> Order Service --(gRPC)--> Orchestrator --(gRPC)--> Stock Service
-                                                          --(gRPC)--> Payment Service
-
-Orchestrator --(Redis Streams)--> {saga:events}:checkout  (fire-and-forget audit/compensation events)
-All services --(Redis Cluster)--> per-domain Redis (data storage + SAGA state)
-```
-
-**Key properties of v1.0 that constrain v2.0 design:**
-
-| Property | Detail | Implication for v2.0 |
-|----------|--------|---------------------|
-| Order->Orchestrator is gRPC `StartCheckout` | Synchronous request/response | This entry point does NOT change -- only internal orchestrator logic changes |
-| SAGA state in Redis hash `{saga:<order_id>}` | Lua CAS transitions | 2PC needs analogous `{2pc:<order_id>}` hash with its own state machine |
-| Idempotency keys on all mutation RPCs | Stored in Redis with TTL | 2PC reuses same idempotency mechanism |
-| `client.py` wraps gRPC stubs with circuit breakers | `reserve_stock()`, `charge_payment()`, etc. | Queue client must expose identical function signatures |
-| Redis Streams used ONLY for fire-and-forget events | NOT for inter-service commands | v2.0 adds a second, separate stream topology for request/reply commands |
-| Compensation retries with `retry_forever` | Exponential backoff, never gives up | 2PC commit/abort retries use identical pattern |
-| Recovery scanner on startup | Scans for stale non-terminal SAGAs | 2PC needs its own recovery scanner for stale non-terminal 2PC records |
-| Orchestrator single replica | Avoids split-brain | Same constraint applies to 2PC coordinator and queue reply consumer |
+**Domain:** Abstract workflow engine orchestrator for distributed checkout microservices
+**Researched:** 2026-03-26
+**Confidence:** HIGH (derived entirely from direct codebase analysis of the v2.0 implementation)
 
 ---
 
-## Recommended Architecture for v2.0
+## Context: What Exists and What Changes
 
-### Two Orthogonal Configuration Axes
+This is a **subsequent milestone** research document. The v2.0 codebase is already shipped and running. The question is specifically: how does an abstract workflow engine integrate with the existing orchestrator internals?
 
-1. **Transaction pattern** -- `TRANSACTION_PATTERN=saga|2pc` (env var)
-2. **Communication mode** -- `COMM_MODE=grpc|queue` (env var)
-
-These are ORTHOGONAL. Four valid combinations exist:
-
-| Combination | Status |
-|------------|--------|
-| `saga + grpc` | Current v1.0 (unchanged) |
-| `saga + queue` | NEW: SAGA over message queues |
-| `2pc + grpc` | NEW: 2PC over gRPC |
-| `2pc + queue` | NEW: 2PC over message queues |
-
-### Component Boundaries
-
-| Component | Responsibility | What Changes in v2.0 |
-|-----------|---------------|---------------------|
-| **Order Service** | Order CRUD, checkout entry point | NO CHANGE -- calls orchestrator gRPC `StartCheckout`; orchestrator's internal pattern is transparent |
-| **Orchestrator** | Transaction coordination (SAGA or 2PC) | NEW: 2PC coordinator, queue client adapter, env var routing, reply consumer |
-| **Stock Service** | Stock CRUD, reserve/release operations | NEW: queue consumer loop (when COMM_MODE=queue), 2PC participant operations (prepare/commit/abort) |
-| **Payment Service** | Payment CRUD, charge/refund operations | NEW: queue consumer loop (when COMM_MODE=queue), 2PC participant operations (prepare/commit/abort) |
-| **Queue Layer** (new logical component) | Request/reply over Redis Streams | NEW: shared protocol for request routing and correlation |
-
-### High-Level v2.0 Diagram
-
-```
-                                 ENV: TRANSACTION_PATTERN = saga | 2pc
-                                 ENV: COMM_MODE = queue | grpc
-
-Client -> Nginx -> Order Service --(gRPC StartCheckout)--> Orchestrator
-                                                               |
-                                                       ┌───────┴───────┐
-                                                       |               |
-                                                 SAGA module     2PC module
-                                                       |               |
-                                                       └───────┬───────┘
-                                                               |
-                                                       transport.py
-                                                               |
-                                                       ┌───────┴───────┐
-                                                       |               |
-                                                 client.py       queue_client.py
-                                                 (gRPC stubs)    (Redis Streams
-                                                       |          request/reply)
-                                                       |               |
-                                                       └───────┬───────┘
-                                                               |
-                                                       Stock / Payment
-                                                       (gRPC server OR
-                                                        queue consumer)
-```
+The constraint from the milestone brief is explicit: **the orchestrator service stays — its internals change from hardcoded logic to generic engine**. No service boundary changes, no new services, no API contract changes.
 
 ---
 
-## New Component 1: 2PC Coordinator
+## Standard Architecture
 
-### 2PC vs SAGA: Fundamental Difference
-
-SAGA executes steps **sequentially** and **compensates** on failure (undo completed work).
-2PC asks all participants to **prepare concurrently**, then makes a single **commit-or-abort decision**.
-
-SAGA is eventually consistent during compensation. 2PC provides atomic commit -- either all participants commit or all abort. In Redis (which has no native XA support), "prepare" actually performs the mutation optimistically, and "abort" undoes it -- structurally similar to SAGA compensation but with a different timing model.
-
-### 2PC State Machine
+### System Overview
 
 ```
-                              2PC State Machine
-
-     ┌──────────┐  all vote YES  ┌────────────┐  all ack   ┌───────────┐
-     │ PREPARING │──────────────>│ COMMITTING │───────────>│ COMMITTED │
-     └──────────┘               └────────────┘            └───────────┘
-          │
-          │ any vote NO or timeout
-          ▼
-     ┌──────────┐  all ack   ┌──────────┐
-     │ ABORTING │───────────>│ ABORTED  │
-     └──────────┘            └──────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Orchestrator Service (unchanged external shape)    │
+│                                                                      │
+│  ┌──────────────┐     ┌──────────────────────────────────────────┐   │
+│  │  grpc_server │────>│          workflow_engine.py              │   │
+│  │   (thin      │     │  WorkflowEngine.execute(definition, ctx) │   │
+│  │   servicer)  │     │                                          │   │
+│  └──────────────┘     │  Strategies:                             │   │
+│                       │  - SagaStrategy (compensating steps)     │   │
+│  ┌──────────────┐     │  - TwoPhaseStrategy (prepare/commit)     │   │
+│  │  recovery.py │────>│                                          │   │
+│  │  (startup    │     │  State Store: workflow_store.py          │   │
+│  │   scanner)   │     │  (replaces saga.py + tpc.py)             │   │
+│  └──────────────┘     └──────────────────────────────────────────┘   │
+│                                           │                          │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │                     transport.py (unchanged)                  │    │
+│  │  reserve_stock / release_stock / charge_payment / ...         │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                           │                          │
+└───────────────────────────────────────────┼──────────────────────────┘
+                                            │
+             gRPC / Redis Streams (COMM_MODE toggle, unchanged)
+                                            │
+                            ┌───────────────┴───────────────┐
+                            │  Stock Service                 │
+                            │  Payment Service               │
+                            └───────────────────────────────┘
 ```
 
-**Valid transitions (for Lua CAS):**
+### Component Responsibilities
 
-```python
-TPC_VALID_TRANSITIONS = {
-    "PREPARING":  {"COMMITTING", "ABORTING"},
-    "COMMITTING": {"COMMITTED"},
-    "ABORTING":   {"ABORTED"},
-}
-```
-
-### 2PC Redis State Record
-
-```
-Redis Hash: {2pc:<order_id>}
-Fields:
-  state:            PREPARING | COMMITTING | COMMITTED | ABORTING | ABORTED
-  order_id:         string
-  user_id:          string
-  total_cost:       string (int)
-  items_json:       string (JSON array)
-  stock_vote:       pending | yes | no
-  payment_vote:     pending | yes | no
-  decision:         none | commit | abort
-  error_message:    string
-  started_at:       unix timestamp
-  updated_at:       unix timestamp
-```
-
-### 2PC Execution Flow
-
-```
-1. Create 2PC record (PREPARING state, both votes "pending")
-2. Send Prepare to Stock + Payment CONCURRENTLY (asyncio.gather)
-3. Collect votes:
-   - Both YES  -> set decision="commit", transition PREPARING -> COMMITTING
-   - Any NO    -> set decision="abort",  transition PREPARING -> ABORTING
-   - Timeout   -> set decision="abort",  transition PREPARING -> ABORTING
-4a. COMMITTING: Send Commit to both (retry-forever), then -> COMMITTED
-4b. ABORTING:   Send Abort to both (retry-forever), then -> ABORTED
-5. Return success (COMMITTED) or failure (ABORTED) to caller
-```
-
-### 2PC vs SAGA: Implementation Mapping
-
-| SAGA Concept | 2PC Equivalent | Code Reuse |
-|-------------|----------------|------------|
-| `saga.py` (create_saga_record, transition_state, get_saga) | `tpc.py` (create_2pc_record, transition_state, get_2pc) | Reuse TRANSITION_LUA verbatim; different state constants |
-| `run_checkout` in grpc_server.py | `run_checkout_2pc` in tpc_coordinator.py | Different flow but same retry patterns |
-| Sequential: reserve stock THEN charge payment | Concurrent: prepare stock AND payment via asyncio.gather | Structural change |
-| `run_compensation` (retry-forever reverse order) | `run_commit` or `run_abort` (retry-forever to all) | Same retry_forever function |
-| `recovery.py` (resume stale SAGAs) | `tpc_recovery.py` (resume stale 2PCs) | Same scan pattern, different state machine |
-| Idempotency keys `{saga:<oid>}:step:reserve:<iid>` | Idempotency keys `{2pc:<oid>}:step:prepare_stock` | Same mechanism, different prefix |
-
-### 2PC Participant Operations
-
-**Critical insight:** Redis has no native prepare/commit split. In this system, "prepare" performs the actual mutation (same as current ReserveStock/ChargePayment). "Commit" is an acknowledgment (no-op on data). "Abort" undoes the mutation (same as current ReleaseStock/RefundPayment).
-
-**Stock Service needs:**
-- `PrepareReserve(tx_id, items[])` -- reserve ALL items atomically, vote YES/NO
-- `CommitReserve(tx_id)` -- acknowledge commit (data already mutated in prepare)
-- `AbortReserve(tx_id)` -- release all reserved stock (equivalent to ReleaseStock per item)
-
-**Payment Service needs:**
-- `PrepareCharge(tx_id, user_id, amount)` -- deduct credit, vote YES/NO
-- `CommitCharge(tx_id)` -- acknowledge commit (data already mutated in prepare)
-- `AbortCharge(tx_id)` -- refund credit (equivalent to RefundPayment)
-
-**Key design decision: 2PC prepares ALL items in one call.** Unlike SAGA which reserves item-by-item, 2PC's prepare must be atomic across all items -- either all can be reserved or none. This requires a new multi-item Lua script for Stock.
-
-### Proto Additions
-
-```protobuf
-// stock.proto additions
-rpc PrepareReserve(PrepareReserveRequest) returns (VoteResponse);
-rpc CommitReserve(TxRequest) returns (AckResponse);
-rpc AbortReserve(TxRequest) returns (AckResponse);
-
-message PrepareReserveRequest {
-  string tx_id = 1;
-  repeated ReserveStockRequest items = 2;  // reuse existing message type
-}
-
-message VoteResponse {
-  bool vote_yes = 1;
-  string error_message = 2;
-}
-
-message TxRequest {
-  string tx_id = 1;
-}
-
-message AckResponse {
-  bool acknowledged = 1;
-  string error_message = 2;
-}
-```
-
-```protobuf
-// payment.proto additions
-rpc PrepareCharge(PrepareChargeRequest) returns (VoteResponse);
-rpc CommitCharge(TxRequest) returns (AckResponse);
-rpc AbortCharge(TxRequest) returns (AckResponse);
-
-message PrepareChargeRequest {
-  string tx_id = 1;
-  string user_id = 2;
-  int32 amount = 3;
-}
-```
+| Component | Responsibility | v3.0 Change |
+|-----------|----------------|-------------|
+| `grpc_server.py` | Receive `StartCheckout` gRPC call, delegate to engine | Becomes thin: imports `workflow_engine`, calls `engine.execute(checkout_workflow, ctx)` |
+| `workflow_engine.py` | Execute a workflow definition with a chosen strategy | NEW — the generic engine |
+| `workflow_store.py` | Persist workflow execution state in Redis | NEW — replaces `saga.py` + `tpc.py` |
+| `workflows/checkout.py` | The checkout workflow defined as data | NEW — replaces `run_checkout` / `run_2pc_checkout` logic |
+| `saga.py` | SAGA-specific state machine (create/transition/get) | DELETED or superseded by `workflow_store.py` |
+| `tpc.py` | 2PC-specific state machine | DELETED or superseded by `workflow_store.py` |
+| `recovery.py` | Startup scanner for stuck transactions | MODIFIED — calls `engine.resume(workflow_id)` instead of protocol-specific logic |
+| `transport.py` | Inter-service call abstraction | UNCHANGED |
+| `consumers.py` | Compensation event consumer loops | MODIFIED — drives engine compensation via engine API |
 
 ---
 
-## New Component 2: Redis Streams Request/Reply
+## Recommended Project Structure
 
-### Why a New Stream Topology (Not Reusing Existing)
-
-The existing Redis Streams (`{saga:events}:checkout`) are fire-and-forget event streams for observability. The new queue system is fundamentally different: it carries commands that require responses. These MUST be separate streams to avoid:
-- Mixing commands with audit events
-- Different delivery guarantees (at-most-once events vs. exactly-once commands)
-- Different consumer group semantics
-
-### Request/Reply Protocol
-
-**Request streams** (one per target service):
-- `{queue}:stock:requests` -- commands destined for Stock Service
-- `{queue}:payment:requests` -- commands destined for Payment Service
-
-**Reply stream** (one for orchestrator):
-- `{queue}:orchestrator:replies` -- all replies flow back here
-
-**Request message format** (XADD fields):
-```
-correlation_id:  UUID (links reply to request)
-command:         "ReserveStock" | "ReleaseStock" | "PrepareReserve" | "CommitReserve" | "AbortReserve" | etc.
-payload:         JSON-encoded request body
-reply_to:        "{queue}:orchestrator:replies"
-timestamp:       unix epoch
-```
-
-**Reply message format** (XADD fields):
-```
-correlation_id:  UUID (matches request)
-success:         "true" | "false"
-payload:         JSON-encoded response body (for commands that return data)
-error_message:   string
-timestamp:       unix epoch
-```
-
-### Request/Reply Data Flow
-
-```
-Orchestrator                    Redis Streams                    Stock Service
-     |                               |                               |
-     |  1. Register Future for       |                               |
-     |     correlation_id in         |                               |
-     |     pending_requests map      |                               |
-     |                               |                               |
-     |  2. XADD {queue}:stock:      |                               |
-     |     requests {correlation_id, |                               |
-     |     command, payload}         |                               |
-     |------------------------------>|                               |
-     |                               |  3. XREADGROUP (consumer      |
-     |                               |     group: stock-workers)     |
-     |                               |<------------------------------|
-     |                               |                               |
-     |                               |     4. Dispatch to business   |
-     |                               |        logic based on command |
-     |                               |                               |
-     |                               |  5. XADD {queue}:orchestrator:|
-     |                               |     replies {correlation_id,  |
-     |                               |     success, payload}         |
-     |                               |<------------------------------|
-     |                               |                               |
-     |  6. Reply consumer reads      |                               |
-     |     from replies stream,      |                               |
-     |     resolves Future by        |                               |
-     |     correlation_id            |                               |
-     |<------------------------------|                               |
-     |                               |                               |
-     |  7. Caller awaits Future,     |                               |
-     |     gets result               |                               |
-```
-
-### Correlation and Waiting: Future-Based Pattern
-
-The orchestrator must block waiting for a specific reply without busy-polling.
-
-**Chosen approach: asyncio.Future map**
-
-```python
-# Conceptual flow in queue_client.py:
-
-pending_requests: dict[str, asyncio.Future] = {}
-
-async def send_and_wait(target_service, command, payload, timeout=5.0):
-    correlation_id = str(uuid.uuid4())
-    future = asyncio.get_event_loop().create_future()
-    pending_requests[correlation_id] = future
-
-    await db.xadd(f"{{queue}}:{target_service}:requests", {
-        "correlation_id": correlation_id,
-        "command": command,
-        "payload": json.dumps(payload),
-        "reply_to": "{queue}:orchestrator:replies",
-        "timestamp": str(int(time.time())),
-    })
-
-    try:
-        result = await asyncio.wait_for(future, timeout=timeout)
-        return result
-    except asyncio.TimeoutError:
-        pending_requests.pop(correlation_id, None)
-        return {"success": False, "error_message": "queue reply timeout"}
-```
-
-**Background reply consumer** runs as a Quart background task, reads from `{queue}:orchestrator:replies`, resolves Futures by correlation_id.
-
-**Why this over per-request reply streams:** Creating/deleting thousands of streams under load doesn't scale. Redis Cluster key-distribution overhead per stream. A single reply stream with a pending map is clean and efficient.
-
-### Consumer Groups for Load Balancing
-
-| Stream | Consumer Group | Consumers |
-|--------|---------------|-----------|
-| `{queue}:stock:requests` | `stock-workers` | Each Stock replica joins same group |
-| `{queue}:payment:requests` | `payment-workers` | Each Payment replica joins same group |
-| `{queue}:orchestrator:replies` | `orch-replies` | Single orchestrator consumer |
-
-**Advantage over gRPC:** When Stock scales to N replicas via HPA, each replica joins the `stock-workers` consumer group. Redis automatically load-balances requests across replicas. With gRPC, load balancing requires client-side logic or a service mesh.
-
-### Stream Key Hash Tags
-
-All queue streams share the `{queue}` hash tag:
-- `{queue}:stock:requests`
-- `{queue}:payment:requests`
-- `{queue}:orchestrator:replies`
-
-This forces all queue keys to the same Redis Cluster hash slot (single node). At the 20-CPU benchmark scale, this is acceptable. Queue throughput is not the bottleneck -- business logic execution is.
-
-### Stale Message Handling
-
-Use XAUTOCLAIM to reclaim messages from crashed consumers (same pattern as existing compensation consumer in `consumers.py`). If a Stock replica crashes mid-processing, another replica in the same consumer group can claim the idle message.
-
-Queue consumers must ACK messages only after sending the reply. If a consumer crashes between processing and ACK, the message will be reclaimed and reprocessed. The idempotency layer on business logic functions ensures no double-execution.
-
----
-
-## Architecture Refactoring: Service Internals
-
-### Stock Service (before and after)
-
-**Before (v1.0):**
-```
-stock/
-  app.py          -- Quart HTTP routes + startup
-  grpc_server.py  -- gRPC servicer with embedded Lua business logic
-```
-
-**After (v2.0):**
-```
-stock/
-  app.py              -- Modified: conditionally starts queue consumer based on COMM_MODE
-  grpc_server.py      -- Modified: delegates to operations.py instead of inline Lua
-  operations.py       -- NEW: extracted business logic (reserve, release, check + 2PC prepare/commit/abort)
-  queue_consumer.py   -- NEW: Redis Streams consumer, dispatches commands to operations.py
-```
-
-### Payment Service (same pattern)
-
-**Before (v1.0):**
-```
-payment/
-  app.py          -- Quart HTTP routes + startup
-  grpc_server.py  -- gRPC servicer with embedded Lua business logic
-```
-
-**After (v2.0):**
-```
-payment/
-  app.py              -- Modified: conditionally starts queue consumer based on COMM_MODE
-  grpc_server.py      -- Modified: delegates to operations.py
-  operations.py       -- NEW: extracted business logic (charge, refund, check + 2PC prepare/commit/abort)
-  queue_consumer.py   -- NEW: Redis Streams consumer, dispatches commands to operations.py
-```
-
-### Orchestrator (before and after)
-
-**Before (v1.0):**
 ```
 orchestrator/
-  app.py          -- Quart startup
-  saga.py         -- SAGA state machine
-  grpc_server.py  -- gRPC servicer + run_checkout + run_compensation
-  client.py       -- gRPC client stubs (circuit breaker wrapped)
-  circuit.py      -- Circuit breaker instances
-  events.py       -- Fire-and-forget event publishing
-  consumers.py    -- Event stream consumers (compensation-handler, audit-logger)
-  recovery.py     -- Startup SAGA recovery scanner
+├── app.py                     # Unchanged entrypoint (modified only for new init)
+├── grpc_server.py             # Thin servicer — calls engine, returns response
+├── workflow_engine.py         # NEW: WorkflowEngine class (execute, resume, compensate)
+├── workflow_store.py          # NEW: generic Redis state persistence for workflows
+├── strategy/
+│   ├── __init__.py
+│   ├── saga_strategy.py       # NEW: SagaStrategy (sequential + compensation)
+│   └── tpc_strategy.py        # NEW: TwoPhaseStrategy (prepare/commit/abort)
+├── workflows/
+│   ├── __init__.py
+│   └── checkout.py            # NEW: checkout workflow definition (data, not code)
+├── transport.py               # UNCHANGED
+├── client.py                  # UNCHANGED
+├── queue_client.py            # UNCHANGED
+├── recovery.py                # MODIFIED: calls engine.resume() instead of SAGA/TPC-specific code
+├── consumers.py               # MODIFIED: compensation consumer calls engine compensation
+├── events.py                  # UNCHANGED
+├── circuit.py                 # UNCHANGED
+├── reply_listener.py          # UNCHANGED
+│
+│   # These are superseded — keep temporarily for reference, delete after engine is stable
+├── saga.py                    # SUPERSEDED by workflow_store.py
+└── tpc.py                     # SUPERSEDED by workflow_store.py
 ```
 
-**After (v2.0):**
-```
-orchestrator/
-  app.py              -- Modified: startup reads env vars, selects pattern + comm mode
-  saga.py             -- UNCHANGED
-  tpc.py              -- NEW: 2PC state machine (create, transition, get)
-  grpc_server.py      -- Modified: delegates to saga_coordinator or tpc_coordinator
-  saga_coordinator.py -- NEW: extracted SAGA run_checkout + run_compensation from grpc_server.py
-  tpc_coordinator.py  -- NEW: 2PC coordinator (run_checkout_2pc, run_commit, run_abort)
-  client.py           -- UNCHANGED: gRPC client stubs
-  queue_client.py     -- NEW: Redis Streams request/reply client (send_and_wait)
-  transport.py        -- NEW: selects client.py or queue_client.py based on COMM_MODE
-  reply_consumer.py   -- NEW: background consumer for reply stream, resolves Futures
-  circuit.py          -- UNCHANGED (only active when COMM_MODE=grpc)
-  events.py           -- UNCHANGED
-  consumers.py        -- UNCHANGED
-  recovery.py         -- Modified: dispatches to SAGA or 2PC recovery based on TRANSACTION_PATTERN
-  tpc_recovery.py     -- NEW: 2PC recovery scanner for stale transactions
-```
+### Structure Rationale
+
+- **`workflow_engine.py`:** Single class that knows how to run a `WorkflowDefinition` using a `Strategy`. It is transport-agnostic and protocol-agnostic. Think of it as the runtime.
+- **`workflow_store.py`:** Generic Redis persistence layer. Replaces the two duplicated Redis hash + Lua CAS state machines in `saga.py` and `tpc.py`. States are stored per-workflow with a protocol tag.
+- **`strategy/`:** The SAGA and 2PC execution strategies. Strategy selection happens once at startup via `TRANSACTION_PATTERN` env var, exactly as before.
+- **`workflows/`:** Workflow definitions are Python dataclasses or dicts — data, not code. The checkout workflow is registered here as a sequence of named steps with action callables and compensation callables.
 
 ---
 
-## Patterns to Follow
+## Architectural Patterns
 
-### Pattern 1: Transport Adapter (Strategy Pattern)
+### Pattern 1: Workflow Definition as Data
 
-**What:** The transport layer is selected once at startup via env var. Transaction logic never imports from transport implementations directly.
+**What:** A `WorkflowDefinition` is a Python object (dataclass) that describes the steps of a workflow as a list of `Step` objects. Each `Step` names an action (a callable via `transport.*`) and an optional compensation callable. The engine executes the steps; the definition owns no execution logic.
 
-**When:** All inter-service calls from orchestrator to Stock/Payment.
+**When to use:** This is the core abstraction that makes the engine generic. All protocol-specific behavior is in the Strategy, not the definition.
 
-**How:**
+**Trade-offs:**
+- Pro: Checkout changes become data changes (add a step, change a step's compensation)
+- Pro: Testing the workflow definition doesn't require running the engine
+- Con: Callables inside the definition are still functions, not strings; the definition isn't fully serializable without extra indirection. For this project's scope (single workflow), that's acceptable.
+
+**Example:**
 ```python
-# orchestrator/transport.py
-import os
+# orchestrator/workflows/checkout.py
+from dataclasses import dataclass
+from typing import Callable, Any
 
-COMM_MODE = os.environ.get("COMM_MODE", "grpc")
+@dataclass
+class Step:
+    name: str
+    action: Callable[..., Any]        # async fn(ctx) -> {"success": bool, ...}
+    compensation: Callable[..., Any]  # async fn(ctx) -> {"success": bool, ...}
+    idempotency_key_template: str     # e.g. "{workflow_id}:step:reserve:{item_id}"
 
-if COMM_MODE == "queue":
-    from queue_client import (
-        reserve_stock, release_stock, charge_payment, refund_payment,
-        prepare_reserve, commit_reserve, abort_reserve,
-        prepare_charge, commit_charge, abort_charge,
-        init_transport, close_transport,
-    )
-else:
-    from client import (
-        reserve_stock, release_stock, charge_payment, refund_payment,
-        init_grpc_clients as init_transport,
-        close_grpc_clients as close_transport,
-    )
-    from client_2pc import (
-        prepare_reserve, commit_reserve, abort_reserve,
-        prepare_charge, commit_charge, abort_charge,
+
+def build_checkout_workflow(items, user_id, total_cost):
+    """Returns a WorkflowDefinition for the checkout transaction."""
+    from transport import reserve_stock, release_stock, charge_payment, refund_payment
+
+    steps = []
+    for item in items:
+        iid, qty = item["item_id"], item["quantity"]
+        steps.append(Step(
+            name=f"reserve_stock:{iid}",
+            action=lambda iid=iid, qty=qty, ctx=None: reserve_stock(
+                iid, qty, f"{{workflow:{ctx['workflow_id']}}}:step:reserve:{iid}"
+            ),
+            compensation=lambda iid=iid, qty=qty, ctx=None: release_stock(
+                iid, qty, f"{{workflow:{ctx['workflow_id']}}}:step:release:{iid}"
+            ),
+            idempotency_key_template=f"reserve:{iid}",
+        ))
+
+    steps.append(Step(
+        name="charge_payment",
+        action=lambda ctx=None: charge_payment(
+            user_id, total_cost, f"{{workflow:{ctx['workflow_id']}}}:step:charge"
+        ),
+        compensation=lambda ctx=None: refund_payment(
+            user_id, total_cost, f"{{workflow:{ctx['workflow_id']}}}:step:refund"
+        ),
+        idempotency_key_template="charge_payment",
+    ))
+
+    return WorkflowDefinition(
+        name="checkout",
+        steps=steps,
+        workflow_id=None,  # set at execution time
     )
 ```
 
-Both `saga_coordinator.py` and `tpc_coordinator.py` import from `transport.py`, never from `client.py` or `queue_client.py` directly.
+### Pattern 2: Strategy as Execution Protocol
 
-### Pattern 2: Transaction Coordinator Selector
+**What:** The `WorkflowEngine` accepts a `Strategy` object that knows how to execute the step list. The `SagaStrategy` runs steps sequentially and compensates in reverse on failure. The `TwoPhaseStrategy` runs prepare-phase on all steps concurrently, then commit or abort.
 
-**What:** Select SAGA or 2PC coordinator at startup. The gRPC servicer delegates to whichever is active.
+**When to use:** Each time a `WorkflowDefinition` is executed, the engine selects the strategy once. The strategy knows about SAGA/2PC mechanics; the engine knows about state persistence.
 
-**How:**
+**Trade-offs:**
+- Pro: Adding a third execution protocol (e.g., saga with parallel stock reservations) means adding a new Strategy class, not touching the engine or the definition
+- Con: The two protocols have genuinely different step signatures (SAGA: action+compensation per step; 2PC: prepare+commit+abort per step). The Step dataclass must accommodate both, either via optional fields or via protocol-specific Step subclasses. Use optional fields — it keeps the definition simpler and the checkout workflow only defines one workflow anyway.
+
+**Example:**
 ```python
-# orchestrator/grpc_server.py (modified)
-import os
+# orchestrator/strategy/saga_strategy.py
+class SagaStrategy:
+    async def execute(self, steps, ctx, store, db) -> dict:
+        """Run steps sequentially. On failure, compensate in reverse."""
+        executed = []
+        for step in steps:
+            result = await retry_forward(lambda: step.action(ctx))
+            if not result["success"]:
+                await store.transition(ctx["workflow_id"], db, "COMPENSATING")
+                await self._compensate(executed, ctx, store, db)
+                return {"success": False, "error_message": result["error_message"]}
+            executed.append(step)
+            await store.mark_step_done(ctx["workflow_id"], step.name, db)
+        await store.transition(ctx["workflow_id"], db, "COMPLETED")
+        return {"success": True, "error_message": ""}
 
-TRANSACTION_PATTERN = os.environ.get("TRANSACTION_PATTERN", "saga")
+    async def _compensate(self, executed_steps, ctx, store, db) -> None:
+        for step in reversed(executed_steps):
+            await retry_forever(lambda: step.compensation(ctx))
+        await store.transition(ctx["workflow_id"], db, "FAILED")
 
-if TRANSACTION_PATTERN == "2pc":
-    from tpc_coordinator import run_checkout
-else:
-    from saga_coordinator import run_checkout
 
-class OrchestratorServiceServicer(...):
-    async def StartCheckout(self, request, context):
-        items = [{"item_id": item.item_id, "quantity": item.quantity} for item in request.items]
-        result = await run_checkout(self.db, request.order_id, request.user_id, items, request.total_cost)
-        return CheckoutResponse(success=result["success"], error_message=result["error_message"])
+# orchestrator/strategy/tpc_strategy.py
+class TwoPhaseStrategy:
+    async def execute(self, steps, ctx, store, db) -> dict:
+        """Prepare all concurrently. Commit all or abort all."""
+        await store.transition(ctx["workflow_id"], db, "PREPARING")
+        results = await asyncio.gather(*[step.action(ctx) for step in steps], return_exceptions=True)
+        all_yes = all(
+            not isinstance(r, Exception) and r.get("success")
+            for r in results
+        )
+        if all_yes:
+            await store.transition(ctx["workflow_id"], db, "COMMITTING")  # WAL before phase 2
+            await asyncio.gather(*[step.commit(ctx) for step in steps], return_exceptions=True)
+            await store.transition(ctx["workflow_id"], db, "COMMITTED")
+            return {"success": True, "error_message": ""}
+        else:
+            await store.transition(ctx["workflow_id"], db, "ABORTING")  # WAL before phase 2
+            await asyncio.gather(*[step.abort(ctx) for step in steps], return_exceptions=True)
+            await store.transition(ctx["workflow_id"], db, "ABORTED")
+            first_error = next(
+                (str(r) if isinstance(r, Exception) else r.get("error_message", "")
+                 for r in results if isinstance(r, Exception) or not r.get("success")), ""
+            )
+            return {"success": False, "error_message": first_error}
 ```
 
-### Pattern 3: Business Logic Extraction
+### Pattern 3: Generic Workflow Store (replaces saga.py + tpc.py)
 
-**What:** Pure async functions that take a Redis client + request parameters and return result dicts. No gRPC or queue awareness.
+**What:** `workflow_store.py` provides a single Redis persistence layer for all workflow executions, regardless of protocol. It uses the same Lua CAS pattern already proven in `saga.py` and `tpc.py`, but parameterized: the valid transitions are passed by the Strategy at creation time rather than hardcoded.
 
-**When:** All Stock/Payment operations that both gRPC servicer and queue consumer need.
+**When to use:** Whenever any code needs to read, create, or transition workflow state. The store is transport-agnostic and protocol-agnostic.
 
-**How:**
+**Trade-offs:**
+- Pro: The SAGA Lua script and the 2PC Lua script are identical — this eliminates the duplication that already exists between `saga.py` and `tpc.py`
+- Pro: Recovery scanner only needs to know "workflow store" not "is this a saga or tpc record"
+- Con: State namespaces still need to be separate (`{workflow:saga:<id>}` vs `{workflow:tpc:<id>}`) to avoid cross-protocol confusion. The store can enforce this via a `protocol` field.
+
+**Example:**
 ```python
-# stock/operations.py
-async def reserve_stock(db, item_id: str, quantity: int, idempotency_key: str) -> dict:
-    """Returns {"success": bool, "error_message": str}"""
-    # Existing Lua CAS logic moved here from grpc_server.py
-    ...
+# orchestrator/workflow_store.py
 
-async def prepare_reserve(db, tx_id: str, items: list[dict]) -> dict:
-    """Returns {"vote_yes": bool, "error_message": str}"""
-    # NEW: multi-item atomic reservation for 2PC
-    ...
+TRANSITION_LUA = """
+local current = redis.call('HGET', KEYS[1], 'state')
+if current ~= ARGV[1] then return 0 end
+redis.call('HSET', KEYS[1], 'state', ARGV[2])
+redis.call('HSET', KEYS[1], 'updated_at', tostring(math.floor(redis.call('TIME')[1])))
+if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], ARGV[3], ARGV[4]) end
+return 1
+"""
+
+
+class WorkflowStore:
+    def __init__(self, valid_transitions: dict[str, set[str]], key_prefix: str):
+        self.valid_transitions = valid_transitions
+        self.key_prefix = key_prefix  # e.g. "workflow:saga" or "workflow:tpc"
+
+    def key(self, workflow_id: str) -> str:
+        return f"{{{self.key_prefix}:{workflow_id}}}"
+
+    async def create(self, db, workflow_id: str, metadata: dict) -> bool:
+        k = self.key(workflow_id)
+        created = await db.hsetnx(k, "state", "STARTED")
+        if not created:
+            return False
+        await db.hset(k, mapping={**metadata, "workflow_id": workflow_id,
+                                  "started_at": str(int(time.time())),
+                                  "updated_at": str(int(time.time()))})
+        await db.expire(k, 7 * 24 * 3600)
+        return True
+
+    async def transition(self, workflow_id: str, db, from_state: str, to_state: str,
+                         flag_field: str = "", flag_value: str = "") -> bool:
+        allowed = self.valid_transitions.get(from_state, set())
+        if to_state not in allowed:
+            raise ValueError(f"Invalid transition: {from_state} -> {to_state}")
+        return bool(await db.eval(
+            TRANSITION_LUA, 1, self.key(workflow_id),
+            from_state, to_state, flag_field, flag_value,
+        ))
+
+    async def get(self, db, workflow_id: str) -> dict | None:
+        raw = await db.hgetall(self.key(workflow_id))
+        if not raw:
+            return None
+        return {k.decode(): v.decode() for k, v in raw.items()}
+
+
+# Pre-built stores for SAGA and 2PC
+SAGA_STORE = WorkflowStore(
+    valid_transitions={
+        "STARTED": {"STOCK_RESERVED", "COMPENSATING"},
+        "STOCK_RESERVED": {"PAYMENT_CHARGED", "COMPENSATING"},
+        "PAYMENT_CHARGED": {"COMPLETED", "COMPENSATING"},
+        "COMPENSATING": {"FAILED"},
+    },
+    key_prefix="workflow:saga",
+)
+
+TPC_STORE = WorkflowStore(
+    valid_transitions={
+        "INIT": {"PREPARING"},
+        "PREPARING": {"COMMITTING", "ABORTING"},
+        "COMMITTING": {"COMMITTED"},
+        "ABORTING": {"ABORTED"},
+    },
+    key_prefix="workflow:tpc",
+)
 ```
 
-Both `grpc_server.py` and `queue_consumer.py` call these functions.
+---
 
-### Pattern 4: Reuse Existing Lua Idempotency for 2PC
+## Data Flow
 
-**What:** 2PC operations use the same Lua-based idempotency mechanism already proven in v1.0.
+### Request Flow (v3.0)
 
-**Why:** The existing `RESERVE_STOCK_ATOMIC_LUA` and `CHARGE_PAYMENT_ATOMIC_LUA` scripts already provide exactly-once semantics via CAS. 2PC prepare is the same mutation with a different idempotency key prefix (`{2pc:<oid>}:step:prepare_stock` instead of `{saga:<oid>}:step:reserve:<iid>`).
+```
+Order Service
+    │ gRPC StartCheckout
+    ▼
+grpc_server.py (OrchestratorServiceServicer.StartCheckout)
+    │ build_checkout_workflow(items, user_id, total_cost)
+    │ engine.execute(workflow_def, ctx={workflow_id, user_id, ...}, db)
+    ▼
+WorkflowEngine.execute()
+    │ store.create(db, workflow_id, metadata)
+    │ publish_event("checkout_started", ...)
+    │ strategy.execute(steps, ctx, store, db)
+    ▼
+SagaStrategy / TwoPhaseStrategy
+    │ calls step.action(ctx) via transport.*
+    │ updates store state at each step boundary
+    │ on failure: strategy drives compensation/abort
+    ▼
+transport.py (reserve_stock / charge_payment / prepare_* / commit_* / abort_*)
+    │ gRPC or Redis Streams (COMM_MODE toggle, unchanged)
+    ▼
+Stock Service / Payment Service
+```
+
+### State Management
+
+```
+WorkflowStore (Redis Hash per workflow_id)
+    │
+    ├── SAGA path: STARTED -> STOCK_RESERVED -> PAYMENT_CHARGED -> COMPLETED
+    │                      -> COMPENSATING -> FAILED
+    │
+    └── 2PC path:  INIT -> PREPARING -> COMMITTING -> COMMITTED
+                                     -> ABORTING  -> ABORTED
+```
+
+### Key Data Flows
+
+1. **New checkout execution:** `grpc_server` calls `engine.execute()` with a freshly-built `WorkflowDefinition` and the workflow ID. Engine creates the store record, delegates to the strategy, strategy drives transport calls.
+2. **Compensation trigger:** Strategy calls `store.transition(id, "COMPENSATING")`, then iterates reversed executed steps calling `step.compensation(ctx)` through `retry_forever`.
+3. **Recovery on restart:** `recovery.py` scans `{workflow:saga:*}` and `{workflow:tpc:*}` keys, reads the state field, calls `engine.resume(workflow_id, strategy, db)` for each non-terminal record.
+4. **Consumer-driven compensation:** `consumers.py` `compensation_consumer` receives `compensation_triggered` event, calls `engine.compensate(workflow_id, db)` instead of importing `run_compensation` from `grpc_server`.
 
 ---
 
-## Anti-Patterns to Avoid
+## Component Change Map
 
-### Anti-Pattern 1: Four Separate Code Paths
+This is the highest-value section for roadmap planning. Every file in the orchestrator is listed with its disposition.
 
-**What:** Writing distinct checkout flows for each of the 4 env var combinations.
+### New Files
 
-**Why bad:** Quadratic code growth, impossible to test all combinations, bugs in one path not caught in others.
+| File | Purpose | Notes |
+|------|---------|-------|
+| `orchestrator/workflow_engine.py` | `WorkflowEngine` class: `execute()`, `resume()`, `compensate()` | Core engine. ~100 lines. |
+| `orchestrator/workflow_store.py` | Generic Redis state persistence, Lua CAS transitions | Replaces `saga.py` + `tpc.py`. ~120 lines. |
+| `orchestrator/strategy/saga_strategy.py` | `SagaStrategy`: sequential forward + reverse compensation | Extracted from `run_checkout` + `run_compensation` in `grpc_server.py`. ~80 lines. |
+| `orchestrator/strategy/tpc_strategy.py` | `TwoPhaseStrategy`: concurrent prepare + commit/abort | Extracted from `run_2pc_checkout` in `grpc_server.py`. ~80 lines. |
+| `orchestrator/workflows/checkout.py` | `build_checkout_workflow()` — the checkout workflow as data | Contains the step list that previously lived inline in `run_checkout`. ~60 lines. |
 
-**Instead:** Layer the abstractions. Transaction logic (SAGA or 2PC) calls transport-agnostic functions. Transport layer (gRPC or queue) implements those functions. The two axes are independent and composable.
+### Modified Files
 
-### Anti-Pattern 2: Queue Consumer Calling gRPC Servicer
+| File | What Changes | What Stays |
+|------|-------------|-----------|
+| `orchestrator/grpc_server.py` | `run_checkout` and `run_2pc_checkout` replaced by `engine.execute(build_checkout_workflow(...), ctx, db)`. `retry_forever` / `retry_forward` move to `strategy/`. `run_compensation` moves to `SagaStrategy`. | `OrchestratorServiceServicer`, `serve_grpc`, `stop_grpc_server`. |
+| `orchestrator/recovery.py` | `resume_saga` and `resume_tpc` replaced by `engine.resume(workflow_id, db)`. `recover_incomplete_sagas` / `recover_incomplete_tpc` replaced by single `recover_incomplete_workflows` that scans both prefixes. | Staleness threshold logic, scan pattern. |
+| `orchestrator/consumers.py` | `_handle_compensation_message` calls `engine.compensate(order_id, db)` instead of importing `run_compensation` from `grpc_server`. | Consumer group setup, `XAUTOCLAIM`, `XREADGROUP` loops. |
+| `orchestrator/app.py` | Startup initializes `WorkflowEngine` with the strategy selected by `TRANSACTION_PATTERN`. Engine instance passed to or imported by `grpc_server`. | Redis init, COMM_MODE branching, background task setup, health endpoint. |
 
-**What:** Stock/Payment queue consumer receives a message, then calls the gRPC servicer class methods.
+### Unchanged Files
 
-**Why bad:** Unnecessary serialization/deserialization roundtrip, coupling to gRPC types.
-
-**Instead:** Extract business logic into `operations.py`. Both gRPC servicer and queue consumer call the same operations.
-
-### Anti-Pattern 3: Synchronous Polling for Queue Replies
-
-**What:** After sending a queue request, busy-polling XREAD in a tight loop waiting for the reply.
-
-**Why bad:** Burns CPU, blocks the asyncio event loop, doesn't scale with concurrent requests.
-
-**Instead:** Use the asyncio.Future map with a single background reply consumer (Pattern described above).
-
-### Anti-Pattern 4: Mixing Event Streams and Command Streams
-
-**What:** Sending request/reply commands on the existing `{saga:events}:checkout` stream.
-
-**Why bad:** Different delivery guarantees (fire-and-forget vs. exactly-once), different consumer semantics, pollutes audit trail with operational messages.
-
-**Instead:** Separate stream topology. `{saga:events}:*` for events. `{queue}:*` for commands.
-
----
-
-## Env Var Configuration Summary
-
-| Variable | Values | Default | Scope | Effect |
-|----------|--------|---------|-------|--------|
-| `TRANSACTION_PATTERN` | `saga`, `2pc` | `saga` | Orchestrator only | Selects SAGA or 2PC coordinator logic |
-| `COMM_MODE` | `grpc`, `queue` | `grpc` | All services | Orchestrator: selects client.py or queue_client.py. Stock/Payment: starts queue consumer if `queue` |
-
-**Deployment constraint:** Both env vars must be set consistently across ALL services. Mixed modes will fail silently. Kubernetes ConfigMap or Helm values should set these once for the entire deployment.
+| File | Reason |
+|------|--------|
+| `orchestrator/transport.py` | Transport abstraction is orthogonal to engine abstraction — this is still the correct layer |
+| `orchestrator/client.py` | gRPC transport implementation — unchanged |
+| `orchestrator/queue_client.py` | Queue transport implementation — unchanged |
+| `orchestrator/reply_listener.py` | Queue reply handling — unchanged |
+| `orchestrator/events.py` | Event publishing — unchanged |
+| `orchestrator/circuit.py` | Circuit breaker instances — unchanged |
+| `orchestrator/saga.py` | SUPERSEDED — keep until `workflow_store.py` is validated, then delete |
+| `orchestrator/tpc.py` | SUPERSEDED — keep until `workflow_store.py` is validated, then delete |
+| All stock/* files | Domain service internals unchanged — transport layer handles the interface |
+| All payment/* files | Domain service internals unchanged |
+| All order/* files | No changes to external API or service boundary |
+| `protos/*.proto` | No new gRPC definitions needed — v3.0 is a pure orchestrator-internal refactor |
+| `docker-compose.yml`, `k8s/`, `helm-config/` | Deployment configs unchanged — same services, same env vars, same ports |
 
 ---
 
-## Suggested Build Order
+## Integration Points
 
-Dependencies flow bottom-up: extract logic -> build transport -> build transaction pattern -> integrate.
+### External Services (unchanged)
 
-### Phase 1: Extract Business Logic (prerequisite for everything)
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| Stock Service | `transport.reserve_stock / release_stock / prepare_stock / ...` | No change — engine calls transport, transport calls stock |
+| Payment Service | `transport.charge_payment / refund_payment / prepare_payment / ...` | No change |
+| Order Service | gRPC `StartCheckout` RPC | No change — Order still calls this; only orchestrator internals change |
 
-**New files:** `stock/operations.py`, `payment/operations.py`
-**Modified files:** `stock/grpc_server.py`, `payment/grpc_server.py`
+### Internal Boundaries
 
-Extract Lua-script-based business logic from gRPC servicers into standalone async functions. gRPC servicers become thin wrappers calling operations.py. This is a pure refactor -- zero behavior change.
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| `grpc_server` ↔ `workflow_engine` | Direct function call: `engine.execute(definition, ctx, db)` | Engine is a plain Python class instance |
+| `workflow_engine` ↔ `strategy/*` | Method call: `strategy.execute(steps, ctx, store, db)` | Strategy is selected once at startup, injected into engine |
+| `strategy/*` ↔ `transport` | Direct async function call: `transport.reserve_stock(...)` | Step `action` callables close over transport functions |
+| `workflow_engine` ↔ `workflow_store` | Method calls on `WorkflowStore` instance | Store is injected into engine at construction |
+| `recovery` ↔ `workflow_engine` | `engine.resume(workflow_id, db)` | Recovery scanner delegates to engine, engine uses stored state to resume |
+| `consumers` ↔ `workflow_engine` | `engine.compensate(workflow_id, db)` | Compensation consumer no longer imports from `grpc_server` |
 
-**Why first:** Both queue consumers AND 2PC participant operations need to call the same business logic. Without this extraction, we'd have to duplicate Lua scripts or create awkward coupling.
+---
 
-**Validation:** All existing integration tests pass unchanged after refactor.
+## Build Order
 
-### Phase 2: Redis Streams Request/Reply Infrastructure
+Dependencies flow: workflow store and workflow definition have no mutual dependency and can be built in parallel. Strategy classes depend on both. The engine wires them together.
 
-**New files:** `orchestrator/queue_client.py`, `orchestrator/reply_consumer.py`, `stock/queue_consumer.py`, `payment/queue_consumer.py`
-**Modified files:** `orchestrator/app.py`, `stock/app.py`, `payment/app.py` (conditional startup)
+### Step 1: WorkflowStore (replaces saga.py / tpc.py)
 
-Build the queue communication layer. Orchestrator sends commands via streams and receives replies. Stock/Payment consume from request streams and produce replies.
+**New file:** `orchestrator/workflow_store.py`
+**Replaces:** The Lua CAS logic in `saga.py` and `tpc.py`
+**Depends on:** Nothing new
+**Why first:** Every other component (engine, strategies, recovery) reads/writes workflow state. The store must exist before anything else can be built.
+**Validation:** Unit tests that create records, transition states, and verify Lua CAS rejection of invalid transitions. Run existing integration tests with `workflow_store.py` wired into `grpc_server.py` alongside existing saga.py/tpc.py (dual-write for safety).
 
-**Why second:** This is the new transport layer. Both SAGA and 2PC can use it. Building it with the existing SAGA flow means we can validate it against the known-good SAGA behavior.
+### Step 2: WorkflowDefinition + Checkout Workflow (define the data model)
 
-**Validation:** SAGA + queue mode passes all existing integration tests (same behavior, different transport).
+**New files:** `orchestrator/workflow_engine.py` (data classes only: `Step`, `WorkflowDefinition`, `WorkflowContext`), `orchestrator/workflows/checkout.py`
+**Depends on:** Step 1 (idempotency key format must match store's key prefix)
+**Why second:** The step and definition types are needed by both the strategies and the engine. Defining them as data structures before implementing execution logic prevents circular design.
+**Validation:** Unit test `build_checkout_workflow()` produces the expected step list without executing anything.
 
-### Phase 3: Transport Adapter + COMM_MODE Toggle
+### Step 3: Strategy Classes
 
-**New files:** `orchestrator/transport.py`
-**Modified files:** `orchestrator/saga_coordinator.py` (extracted from grpc_server.py), `orchestrator/grpc_server.py`
+**New files:** `orchestrator/strategy/saga_strategy.py`, `orchestrator/strategy/tpc_strategy.py`
+**Depends on:** Step 2 (step types), Step 1 (store transitions), `retry_forever`/`retry_forward` (moved here from `grpc_server.py`)
+**Why third:** The strategies encapsulate `run_checkout` / `run_2pc_checkout` / `run_compensation` logic. They can be unit-tested in isolation against a mock store before the engine is complete.
+**Validation:** Unit tests driving SagaStrategy with mock steps, verifying compensation is called in reverse order. Unit tests driving TwoPhaseStrategy with mock steps, verifying WAL (COMMITTING before commit messages).
 
-Wire up the env var toggle. Extract `run_checkout` and `run_compensation` from `grpc_server.py` into `saga_coordinator.py`. Both import from `transport.py` instead of `client.py` directly.
+### Step 4: WorkflowEngine (wires everything)
 
-**Why third:** Connects Phase 2 to existing SAGA flow through a clean abstraction.
+**New file:** `orchestrator/workflow_engine.py` (the `WorkflowEngine` class, extending the Step/Definition types from Step 2)
+**Depends on:** Steps 1–3
+**Why fourth:** Engine is the integrator. `execute()` calls `store.create()`, publishes the start event, calls `strategy.execute()`. `resume()` reads the current state from the store and re-enters the strategy at the right point. `compensate()` reads the store state and calls `strategy.compensate()`.
+**Validation:** Integration test: full checkout happy path through engine. Integration test: checkout with stock failure triggers compensation. Integration test: checkout with payment failure after stock reserved triggers partial compensation.
 
-**Validation:** Toggle `COMM_MODE` between `grpc` and `queue`, run full test suite -- both pass.
+### Step 5: Wire Into grpc_server and recovery
 
-### Phase 4: 2PC State Machine + Participant Operations
+**Modified files:** `orchestrator/grpc_server.py`, `orchestrator/recovery.py`, `orchestrator/consumers.py`, `orchestrator/app.py`
+**Depends on:** Step 4
+**Why fifth:** Swap out the hardcoded `run_checkout` / `run_2pc_checkout` calls in `grpc_server.py`. Update `recovery.py` to use `engine.resume()`. Update `consumers.py` to use `engine.compensate()`. Wire the engine instance in `app.py`.
+**Validation:** All existing integration tests pass. Kill-test produces 0 consistency violations. Both TRANSACTION_PATTERN modes work.
 
-**New files:** `orchestrator/tpc.py`, 2PC RPCs added to protos, 2PC functions in `stock/operations.py` and `payment/operations.py`
-**Modified files:** `stock/grpc_server.py`, `payment/grpc_server.py` (add 2PC RPC handlers), `stock/queue_consumer.py`, `payment/queue_consumer.py` (add 2PC command dispatch)
+### Step 6: Delete saga.py and tpc.py
 
-Build the 2PC state machine (create record, Lua CAS transitions) and participant-side prepare/commit/abort operations. Add new RPCs to proto files.
-
-**Why fourth:** Depends on extracted business logic (Phase 1). The 2PC state machine mirrors saga.py closely and can be unit-tested in isolation.
-
-**Validation:** Unit tests for 2PC state transitions. Prepare/commit/abort operations work in isolation.
-
-### Phase 5: 2PC Coordinator + Recovery
-
-**New files:** `orchestrator/tpc_coordinator.py`, `orchestrator/tpc_recovery.py`
-**Modified files:** `orchestrator/recovery.py` (dispatch to SAGA or 2PC), `orchestrator/grpc_server.py` (TRANSACTION_PATTERN toggle)
-
-Implement the 2PC coordination flow (concurrent prepare, decision, commit/abort with retry-forever) and the recovery scanner.
-
-**Why fifth:** Depends on 2PC state machine (Phase 4) and transport adapter (Phase 3). This is the highest-complexity new code.
-
-**Validation:** 2PC + gRPC end-to-end. 2PC + queue end-to-end. Recovery for stuck 2PC transactions.
-
-### Phase 6: Integration Testing + Benchmark
-
-**Modified files:** `orchestrator/app.py` (final wiring), integration test suite
-**New files:** Test configurations for all 4 combinations
-
-Wire everything together. Update startup code. Run integration tests for all 4 env var combinations. Run benchmark with 0 consistency violations.
-
-**Validation:** All 4 combinations pass integration tests. Benchmark passes for each.
+**Deleted files:** `orchestrator/saga.py`, `orchestrator/tpc.py`
+**Depends on:** Step 5 (fully validated)
+**Why last:** Removing the old modules only after the new ones are proven prevents regression risk. This also confirms that no other file still imports from the old modules.
+**Validation:** `grep -r "from saga import\|from tpc import" orchestrator/` returns nothing. Full integration test suite passes.
 
 ### Build Order Dependency Graph
 
 ```
-Phase 1: Extract Business Logic
-    |
-    +---> Phase 2: Queue Infrastructure
-    |         |
-    |         +---> Phase 3: Transport Adapter
-    |                   |
-    +---> Phase 4: 2PC State Machine + Participants
-              |         |
-              +----+----+
-                   |
-                   v
-             Phase 5: 2PC Coordinator
-                   |
-                   v
-             Phase 6: Integration
+Step 1: WorkflowStore
+    │
+    ├──> Step 2: WorkflowDefinition + Checkout Workflow
+    │       │
+    │       └──> Step 3: SagaStrategy + TwoPhaseStrategy
+    │                       │
+    │                       └──> Step 4: WorkflowEngine
+    │                                       │
+    │                                       └──> Step 5: Wire grpc_server + recovery + consumers
+    │                                                       │
+    │                                                       └──> Step 6: Delete saga.py + tpc.py
 ```
-
-Phases 2 and 4 can be developed in parallel after Phase 1.
 
 ---
 
-## Scalability Considerations
+## Anti-Patterns
 
-| Concern | v1.0 (SAGA+gRPC) | v2.0 Queue Mode | v2.0 2PC Mode |
-|---------|-------------------|-----------------|---------------|
-| Inter-service latency | ~1ms (gRPC direct) | ~3-5ms (XADD + XREADGROUP + XADD reply) | Same as transport layer |
-| Concurrent requests | Limited by gRPC channel capacity | Limited by reply consumer throughput | Slightly better -- parallel prepare |
-| Load balancing | Single gRPC stub (no balancing) | Automatic via consumer groups | Same as transport layer |
-| Service scaling | HPA but gRPC routes to one pod | Consumer groups auto-distribute | Same |
-| Failure detection | Circuit breaker + gRPC timeout | Reply timeout + XAUTOCLAIM | Prepare timeout = vote NO |
-| Message durability | None (gRPC is transient) | Redis Streams with AOF | Same |
-| Orchestrator replicas | 1 (split-brain avoidance) | 1 (single reply consumer) | 1 (single coordinator) |
+### Anti-Pattern 1: Engine Knows About Checkout
+
+**What people do:** Put checkout-specific logic (reserve stock per item, charge payment) inside `WorkflowEngine` methods as special cases.
+**Why it's wrong:** The engine becomes non-generic. Adding a second workflow (e.g., refund, restock) requires modifying the engine class.
+**Do this instead:** `WorkflowEngine.execute()` takes a `WorkflowDefinition`. All checkout knowledge lives in `workflows/checkout.py`. The engine runs whatever steps it is given.
+
+### Anti-Pattern 2: Strategy Knows the Step Names
+
+**What people do:** `SagaStrategy` checks `if step.name == "charge_payment": do_payment_specific_thing`.
+**Why it's wrong:** Couples the execution protocol to a specific workflow. SagaStrategy must work for any workflow definition.
+**Do this instead:** Steps carry all the information the strategy needs (`action`, `compensation`, completion flags). Strategy operates on the step interface, not on step names.
+
+### Anti-Pattern 3: Keep saga.py and tpc.py as Live Modules
+
+**What people do:** Keep the old state machines running in parallel with `WorkflowStore` indefinitely "just in case."
+**Why it's wrong:** Dual-write logic creates split-brain. Recovery scanner must check both old and new key prefixes. State can diverge.
+**Do this instead:** Run in parallel only during the validation window (Step 5 above). Delete once the new store is proven correct under integration tests.
+
+### Anti-Pattern 4: New Redis Key Format for Workflow Store
+
+**What people do:** Use a completely different key format (`workflow:{id}`) that doesn't match existing recovery scanner patterns.
+**Why it's wrong:** In-flight v2.0 records (keys like `{saga:<id>}` and `{tpc:<id>}>`) exist in Redis when v3.0 is deployed. Recovery must handle both old and new key formats during rollover.
+**Do this instead:** During migration, keep the key prefixes identical (`{saga:<id>}`, `{tpc:<id>}`) so recovery still works. After all old records expire (7-day TTL), optionally migrate to a unified prefix. This is the zero-risk path.
+
+### Anti-Pattern 5: Workflow Definition as Global State
+
+**What people do:** Define the checkout workflow as a module-level constant imported from `workflows/checkout.py`.
+**Why it's wrong:** Each checkout execution needs a fresh definition with closures over the specific `items`, `user_id`, and `total_cost` for that order. A shared global cannot carry per-request data.
+**Do this instead:** `build_checkout_workflow(items, user_id, total_cost)` is a factory function called per request inside `StartCheckout`.
+
+---
+
+## Scaling Considerations
+
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| Current (20 CPU benchmark) | Single orchestrator replica is correct and sufficient — no change |
+| >20 CPUs, multiple orchestrators | Workflow engine + Lua CAS are already safe for concurrent execution: HSETNX creates exactly one record, Lua CAS rejects duplicate transitions. Multiple orchestrators can safely run the same engine code. |
+| New workflow types | Add a new file to `workflows/`. No engine or strategy changes needed. |
+| New execution strategy | Add a new class to `strategy/`. No engine or workflow definition changes needed. |
 
 ---
 
 ## Sources
 
-- Existing v1.0 codebase (direct code reading) -- HIGH confidence
-- Redis Streams XREADGROUP, XADD, consumer groups -- HIGH confidence (already used in v1.0 for events)
-- 2PC protocol semantics (distributed systems literature) -- HIGH confidence (well-established algorithm)
-- Redis limitation re: no native XA/prepare-commit -- HIGH confidence (confirmed in PROJECT.md, inherent to Redis design)
-- asyncio.Future for correlation-based request/reply -- HIGH confidence (standard Python asyncio pattern)
+- Direct codebase analysis: `orchestrator/grpc_server.py`, `orchestrator/saga.py`, `orchestrator/tpc.py`, `orchestrator/recovery.py`, `orchestrator/transport.py`, `orchestrator/consumers.py`, `orchestrator/app.py` — HIGH confidence
+- PROJECT.md v3.0 milestone goal: "Generic workflow engine that executes abstract step sequences (action + compensation) without knowing about specific services" — HIGH confidence (primary requirement source)
+- Temporal/Cadence architecture patterns (workflow as data, strategy separation) — MEDIUM confidence (inspiration source; full feature set explicitly out of scope per PROJECT.md)
+- Existing v2.0 ARCHITECTURE.md (this file's predecessor) — HIGH confidence for what is unchanged
 
 ---
 
-*Research authored: 2026-03-12 for v2.0 milestone*
+*Architecture research for: v3.0 Abstract Orchestrator — workflow engine integration*
+*Researched: 2026-03-26*

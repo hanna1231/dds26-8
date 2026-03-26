@@ -1,34 +1,37 @@
 # Technology Stack
 
-**Project:** DDS26-8 v2.0 — 2PC & Message Queues
-**Researched:** 2026-03-12
-**Scope:** Stack additions/changes for 2PC transaction coordination and Redis Streams request/reply inter-service messaging
+**Project:** DDS26-8 v3.0 — Abstract Workflow Engine & Refactoring
+**Researched:** 2026-03-26
+**Confidence:** HIGH (pure codebase analysis — no new packages, no version questions)
 
 ---
 
-## Key Finding: Zero New Dependencies
+## Key Finding: Zero New Dependencies (Again)
 
-The existing stack already provides everything needed for v2.0. Both 2PC coordination and Redis Streams request/reply messaging are **application-level patterns** built on top of the same `redis[hiredis]` and `msgspec` libraries already in use. No new PyPI packages, no new infrastructure components, no new proto definitions required for the core features.
+The existing stack provides everything needed for v3.0. The abstract workflow engine is a **pure application-layer refactoring**: move hardcoded SAGA/2PC logic from `grpc_server.py` into a generic engine that accepts workflow definitions as data structures. The engine itself uses Python `dataclasses`, `typing.Protocol`, and `asyncio` — all part of Python's standard library.
 
 This is the correct outcome because:
-1. **2PC over Redis** is a coordination protocol implemented via Redis hashes + Lua CAS — the same primitives already used for SAGA state machines in `saga.py`
-2. **Redis Streams request/reply** uses XADD/XREADGROUP — the same Redis Streams API already used for SAGA events in `events.py` and `consumers.py`
-3. **Message serialization** for stream payloads uses `msgspec.json` — already a dependency in all services
+1. **Workflow step definitions** are `@dataclass` structs holding references to async callables — no framework needed
+2. **Engine state persistence** uses the same Redis hash + Lua CAS pattern already proven in `saga.py` and `tpc.py`
+3. **Execution strategies** (SAGA compensation vs 2PC prepare/commit/abort) are engine-level concerns that dispatch to the same transport functions in `transport.py`
+4. **Step registration** is a Python `dict` or class-level list — no registry library, no plugin system
 
 ---
 
-## Existing Stack (No Version Changes Needed)
+## Existing Stack (Unchanged for v3.0)
 
-| Technology | Version | Current Use (v1.0) | v2.0 Additional Use |
-|------------|---------|---------------------|---------------------|
-| redis[hiredis] | 5.0.3 | SAGA state (HSET/HGET), Lua CAS transitions, XADD events, XREADGROUP consumers | 2PC coordinator state (same hash+Lua pattern), request/reply streams (same XADD/XREADGROUP) |
-| msgspec | 0.18.6 | msgpack for Stock/Payment data, JSON for event payloads | JSON serialization for stream request/reply message envelopes |
-| quart | 0.20.0 | HTTP API servers, `app.add_background_task` for consumers | No change — stream consumer tasks use same background task mechanism |
-| uvicorn | 0.34.0 | ASGI server | No change |
-| grpcio | 1.78.0 | Inter-service RPC (Stock, Payment, Orchestrator) | Kept as fallback communication path behind `COMM_MODE` env var |
-| protobuf | >=6.31.1 | gRPC message definitions | No change — not used for stream messages |
-| circuitbreaker | 2.1.3 | Circuit breakers on gRPC calls in `client.py` | Reuse same decorator on stream-based call functions |
-| httpx | 0.27.0 | Order service -> Orchestrator HTTP calls | No change |
+| Technology | Version | Current Use | v3.0 Role |
+|------------|---------|-------------|-----------|
+| Python | 3.13 | All services | `dataclasses`, `typing.Protocol`, `typing.TypeVar` used for engine API design |
+| redis[hiredis] | 5.0.3 | SAGA/2PC state, Lua CAS, Streams | Engine state persistence via same Redis hash + Lua CAS pattern |
+| quart | 0.20.0 | HTTP API, background tasks | Unchanged |
+| uvicorn | 0.34.0 | ASGI server | Unchanged |
+| grpcio | 1.78.0 | gRPC transport (fallback) | Unchanged |
+| protobuf | >=6.31.1 | gRPC message definitions | Unchanged |
+| msgspec | 0.18.6 | JSON/msgpack serialization | Serializing engine context/step results to Redis |
+| circuitbreaker | 2.1.3 | Fault tolerance on transport calls | Unchanged — wrapped around step action callables |
+
+No new PyPI packages. No version bumps required.
 
 ---
 
@@ -36,42 +39,97 @@ This is the correct outcome because:
 
 | Rejected Addition | Why Not |
 |-------------------|---------|
-| **Kafka / RabbitMQ / NATS** | Redis Streams already deployed on 3 clusters. Adding a message broker blows the 20 CPU budget and adds operational complexity for zero benefit. The existing `consumers.py` already proves Redis Streams consumer groups work. |
-| **celery / dramatiq / arq** | Task queue abstractions add layers over Redis Streams with no value. We need raw stream control for request/reply correlation, not job dispatch. |
-| **aioredis** (standalone) | Deprecated; `redis.asyncio` (in redis-py 5.x) is the successor and already in use across all services. |
-| **redis-om / walrus** | ORM abstractions over Redis. The codebase already uses raw redis-py with Lua scripts for atomicity. An ORM would fight existing patterns. |
-| **New .proto definitions for 2PC** | 2PC communication goes over Redis Streams, not gRPC. Existing gRPC protos stay unchanged as the fallback path. Adding 2PC-specific protos would couple the transport to the transaction pattern. |
-| **Distributed lock library (redlock-py, pottery)** | 2PC uses Lua CAS on coordinator state (same pattern as SAGA's `TRANSITION_LUA`), not distributed locks. Locks add complexity and deadlock risk. |
-| **uuid7 / ulid** | Python stdlib `uuid.uuid4()` is sufficient for correlation IDs. Stream message IDs are auto-generated by Redis (`*`). |
-| **tenacity** | Already rejected in v1.0 in favor of hand-rolled `retry_forever` and `retry_forward` in `grpc_server.py`. These are simple, well-tested, and carry over to stream-based calls unchanged. |
-| **structlog** | Nice-to-have but out of scope for v2.0. The existing `logging` stdlib usage is consistent across the codebase and sufficient. |
+| **temporalio** (Temporal Python SDK) | Full Temporal requires a running Temporal server — not deployable in the course's Docker Compose / Kubernetes setup. The *concepts* (workflow + activities separation, state persistence) are what to copy, not the library. |
+| **prefect / airflow / celery** | Job orchestration frameworks built for data pipelines or task queues — bring their own brokers, databases, and UI. Massive overkill and incompatible with the Redis-only infrastructure constraint. |
+| **python-statemachine** | Adds a state machine library on top of the custom Lua CAS transition pattern that's already proven and battle-tested under the benchmark. An ORM over your state machine is worse than the hand-rolled version here. |
+| **transitions** (FSM library) | Same objection as python-statemachine. The existing `VALID_TRANSITIONS` dict + Lua CAS is simpler, more performant, and already tested. |
+| **tenacity / stamina** | Already rejected in v1.0. `retry_forever` and `retry_forward` in `grpc_server.py` are simple, well-understood, and carry forward unchanged into the engine. |
+| **pydantic** | `dataclasses` + `msgspec` already handle validation and serialization. Pydantic adds 60ms import overhead with zero benefit here. |
+| **typing_extensions** | Python 3.13 ships `Protocol`, `TypeVar`, `dataclasses`, `TypedDict` natively. No backport needed. |
 
 ---
 
 ## Implementation Patterns Using Existing Stack
 
-### 2PC State Machine (Mirrors SAGA Pattern)
+### Core Pattern: Workflow Definition as Data Structure
 
-Uses the identical Redis primitives as `saga.py`:
-
-- **Redis Hash** for 2PC coordinator record: `{2pc:<order_id>}` with fields `state`, `participants`, `votes`, `updated_at`
-- **Lua CAS script** for atomic state transitions (same pattern as `TRANSITION_LUA` in `saga.py`)
-- **States:** `INIT -> PREPARING -> COMMITTING -> COMMITTED` and `INIT -> PREPARING -> ABORTING -> ABORTED`
-- **Participant vote tracking** via hash fields: `vote:stock`, `vote:payment` set atomically in Lua
+The engine decouples *workflow definition* (what steps to run, in what order, with what compensations) from *workflow execution* (how to run them, retry them, persist state). The checkout logic becomes a definition; the engine becomes generic infrastructure.
 
 ```python
-# 2PC states and transitions — structurally identical to saga.py
-TPC_STATES = {"INIT", "PREPARING", "COMMITTING", "COMMITTED", "ABORTING", "ABORTED"}
+# orchestrator/engine/types.py  — pure Python stdlib, zero imports from outside
+from dataclasses import dataclass, field
+from typing import Protocol, Awaitable, Any
 
-TPC_VALID_TRANSITIONS = {
-    "INIT": {"PREPARING"},
-    "PREPARING": {"COMMITTING", "ABORTING"},  # All YES -> COMMITTING, any NO/timeout -> ABORTING
-    "COMMITTING": {"COMMITTED"},
-    "ABORTING": {"ABORTED"},
-}
+class StepFn(Protocol):
+    """A step action or compensation: accepts a context dict, returns success dict."""
+    async def __call__(self, ctx: dict[str, Any]) -> dict[str, Any]: ...
 
-# Same Lua CAS pattern as TRANSITION_LUA:
-TPC_TRANSITION_LUA = """
+@dataclass
+class WorkflowStep:
+    name: str                        # e.g. "reserve_stock", "charge_payment"
+    action: StepFn                   # forward callable: reserve stock, charge payment
+    compensation: StepFn | None      # reverse callable: release stock, refund payment
+    idempotency_key_fn: callable     # derives key from (workflow_id, step_name) -> str
+
+@dataclass
+class WorkflowDefinition:
+    name: str                        # e.g. "checkout"
+    steps: list[WorkflowStep]        # ordered list; compensation runs in reverse
+    strategy: str = "saga"           # "saga" or "2pc"
+```
+
+**Why this design:**
+- `StepFn` as a `Protocol` means existing callables from `transport.py` satisfy the interface without modification — structural subtyping, no inheritance required
+- `WorkflowStep` wraps what `run_checkout()` already does inline: action + compensation as a paired unit
+- `WorkflowDefinition` is how Temporal/Cadence model it: a workflow is a named, ordered sequence of activities
+
+### Core Pattern: Generic Engine Execution
+
+```python
+# orchestrator/engine/executor.py
+class WorkflowEngine:
+    def __init__(self, db):
+        self._db = db
+        self._definitions: dict[str, WorkflowDefinition] = {}
+
+    def register(self, definition: WorkflowDefinition) -> None:
+        """Register a workflow definition by name."""
+        self._definitions[definition.name] = definition
+
+    async def execute(self, workflow_name: str, workflow_id: str, ctx: dict) -> dict:
+        """Execute a registered workflow. Returns {success, error_message}."""
+        defn = self._definitions[workflow_name]
+        if defn.strategy == "saga":
+            return await self._execute_saga(defn, workflow_id, ctx)
+        elif defn.strategy == "2pc":
+            return await self._execute_2pc(defn, workflow_id, ctx)
+        raise ValueError(f"Unknown strategy: {defn.strategy}")
+```
+
+The engine's `_execute_saga` replaces the body of `run_checkout()` in `grpc_server.py`, but operates on a generic `WorkflowDefinition` rather than hardcoded step logic. The engine calls `step.action(ctx)`, transitions state using the existing Lua CAS pattern, and calls `step.compensation(ctx)` in reverse order on failure.
+
+### State Persistence Pattern: Generalized Redis Hash
+
+The engine persists workflow state with the same Redis hash + Lua CAS approach already validated by `saga.py` and `tpc.py`. The key difference: state field names are engine-generated from step names, not hardcoded.
+
+```
+Redis key:  {workflow:<workflow_id>}
+Fields:
+  state          — engine state: STARTED | STEP_N_DONE | COMPLETED | COMPENSATING | FAILED
+  workflow_name  — "checkout"
+  strategy       — "saga" or "2pc"
+  context_json   — msgspec.json encoded context dict (items, user_id, total_cost, etc.)
+  step_<name>    — "done" | "compensated" per step (idempotency flags)
+  error_message  — set on failure
+  started_at     — unix timestamp
+  updated_at     — unix timestamp (updated by Lua transition)
+```
+
+The Lua CAS script from `saga.py` is **reused verbatim** — it operates on any hash key and is not SAGA-specific. The engine uses the same `TRANSITION_LUA` constant.
+
+```python
+# engine/state.py — reuses the existing Lua CAS pattern
+TRANSITION_LUA = """
 local current = redis.call('HGET', KEYS[1], 'state')
 if current ~= ARGV[1] then return 0 end
 redis.call('HSET', KEYS[1], 'state', ARGV[2])
@@ -79,167 +137,196 @@ redis.call('HSET', KEYS[1], 'updated_at', tostring(math.floor(redis.call('TIME')
 if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], ARGV[3], ARGV[4]) end
 return 1
 """
+# This is literally the same script as in saga.py and tpc.py — extract to shared module
 ```
 
-No new library needed — this is a state machine over Redis hashes with Lua atomicity, exactly like the existing SAGA implementation.
+**Key decision:** Extract `TRANSITION_LUA` to a single `engine/state.py` module. Both `saga.py` and `tpc.py` duplicate this script today — that duplication is the refactoring target.
 
-### Redis Streams Request/Reply Pattern
+### Workflow Registration Pattern
 
-Uses the same Redis Streams API already exercised in `events.py` and `consumers.py`:
-
-```
-Orchestrator                       Stock/Payment Service
-    |                                       |
-    |-- XADD {svc:requests} -------------->|  (request with correlation_id)
-    |                                       |-- XREADGROUP (consumer loop)
-    |                                       |-- dispatch to business logic
-    |<-- XADD {svc:replies:<corr_id>} -----|  (reply on per-correlation stream)
-    |-- XREAD BLOCK on reply stream         |
-    |   (timeout = RPC_TIMEOUT)             |
-```
-
-**Key primitives (all in redis-py 5.0.3, all already used in the codebase):**
-
-| Primitive | Already Used In | v2.0 Use |
-|-----------|----------------|----------|
-| `XADD` | `events.py:publish_event()` | Publish request messages, publish reply messages |
-| `XREADGROUP` | `consumers.py:compensation_consumer()` | Service-side consumer loop for incoming requests |
-| `XREAD` with `BLOCK` | (new usage) | Orchestrator waits for reply on per-correlation stream |
-| `XACK` | `consumers.py` (both consumers) | Acknowledge processed request messages |
-| `XAUTOCLAIM` | `consumers.py:compensation_consumer()` | Reclaim stale request messages on crash recovery |
-| `XGROUP CREATE` | `consumers.py:setup_consumer_groups()` | Create consumer groups on request streams |
-
-**Message envelope** (serialized with `msgspec.json`, already a dependency):
+Checkout registers itself as a workflow at startup, not hardcoded in `grpc_server.py`:
 
 ```python
-# Request message fields (XADD)
-{
-    "correlation_id": "<uuid4>",           # Links request to reply
-    "action": "reserve_stock",             # Operation name (maps to gRPC RPC name)
-    "payload": '{"item_id":"x","qty":2}',  # JSON-encoded request body
-    "idempotency_key": "...",              # Same keys as gRPC path
-    "timestamp": "1710234567",
-}
+# orchestrator/workflows/checkout.py — the definition, not the engine
+from engine.types import WorkflowDefinition, WorkflowStep
+from transport import reserve_stock, release_stock, charge_payment, refund_payment
 
-# Reply message fields (XADD)
-{
-    "correlation_id": "<uuid4>",           # Same as request
-    "success": "true",                     # String "true"/"false"
-    "payload": '{"error_message":""}',     # JSON-encoded response body
-    "timestamp": "1710234568",
-}
+def make_checkout_workflow(items: list[dict], user_id: str, total_cost: int) -> WorkflowDefinition:
+    """
+    Build a checkout WorkflowDefinition from order data.
+    Steps are closures capturing the specific items/user for this order.
+    """
+    steps = []
+    for item in items:
+        iid, qty = item["item_id"], item["quantity"]
+        steps.append(WorkflowStep(
+            name=f"reserve_stock_{iid}",
+            action=lambda ctx, i=iid, q=qty: reserve_stock(i, q, ctx["idempotency_keys"][f"reserve_{i}"]),
+            compensation=lambda ctx, i=iid, q=qty: release_stock(i, q, ctx["idempotency_keys"][f"release_{i}"]),
+            idempotency_key_fn=lambda wid, sname, i=iid: f"{{saga:{wid}}}:step:reserve:{i}",
+        ))
+    steps.append(WorkflowStep(
+        name="charge_payment",
+        action=lambda ctx: charge_payment(ctx["user_id"], ctx["total_cost"], ctx["idempotency_keys"]["charge"]),
+        compensation=lambda ctx: refund_payment(ctx["user_id"], ctx["total_cost"], ctx["idempotency_keys"]["refund"]),
+        idempotency_key_fn=lambda wid, _: f"{{saga:{wid}}}:step:charge",
+    ))
+    return WorkflowDefinition(name="checkout", steps=steps, strategy="saga")
 ```
 
-**Reply stream strategy:** Use per-correlation ephemeral streams (`{svc:replies:<correlation_id>}`) that auto-expire. The orchestrator does `XREAD BLOCK 5000` on this stream, then deletes it after reading the reply. This avoids the complexity of filtering a shared reply stream by correlation ID.
+This is the critical abstraction: checkout logic moves from `grpc_server.py` into a workflow definition, and the engine is strategy-agnostic.
+
+### Execution Strategy Separation
+
+The engine dispatches to strategy-specific execution based on `WorkflowDefinition.strategy`:
+
+| Strategy | Engine Method | What It Does |
+|----------|--------------|--------------|
+| `"saga"` | `_execute_saga(defn, wf_id, ctx)` | Sequential forward steps, reverse compensation on failure, exponential backoff retry |
+| `"2pc"` | `_execute_2pc(defn, wf_id, ctx)` | Concurrent prepare phase via `asyncio.gather`, WAL-persist commit/abort decision, parallel phase-2 |
+
+Both strategies reuse the existing `retry_forward()` and `retry_forever()` utilities — those are extracted to `engine/retry.py` (currently duplicated in `grpc_server.py`).
+
+### Recovery Integration
+
+The existing `recovery.py` scanner (`recover_incomplete_sagas`, `recover_incomplete_tpc`) becomes `engine/recovery.py`:
 
 ```python
-# Orchestrator side (replacing a gRPC call):
-reply_stream = f"{{stock:replies:{correlation_id}}}"
-await stock_db.xadd("{stock:requests}", {
-    "correlation_id": correlation_id,
-    "action": "reserve_stock",
-    "payload": msgspec.json.encode(request_data).decode(),
-    "idempotency_key": ikey,
-})
-# Block-wait for reply (replaces grpc timeout=RPC_TIMEOUT)
-response = await stock_db.xread({reply_stream: "0-0"}, block=5000, count=1)
-await stock_db.delete(reply_stream)  # cleanup ephemeral stream
+# engine/recovery.py — generic scanner, replaces service-specific scanners
+async def recover_incomplete_workflows(db, engine: WorkflowEngine) -> None:
+    """Scan for non-terminal workflow records and resume them."""
+    async for key in db.scan_iter(match="{workflow:*", count=100):
+        raw = await db.hgetall(key)
+        if not raw:
+            continue
+        record = {k.decode(): v.decode() for k, v in raw.items()}
+        if record.get("state") not in NON_TERMINAL_STATES:
+            continue
+        await engine.resume(record)  # engine dispatches to strategy-specific resume
 ```
 
-### Environment Variable Toggles
+The current duplication between `recover_incomplete_sagas` and `recover_incomplete_tpc` collapses into one function that dispatches through the engine.
 
-Two new env vars control runtime behavior (stdlib `os.environ.get()`):
+---
 
-| Env Var | Values | Default | Controls |
-|---------|--------|---------|----------|
-| `TRANSACTION_MODE` | `saga` / `2pc` | `saga` | Which transaction coordinator runs the checkout |
-| `COMM_MODE` | `queue` / `grpc` | `queue` | Whether inter-service calls use Redis Streams or gRPC |
+## File Structure for New Engine Module
 
-The orchestrator's `client.py` module becomes a facade that dispatches to either gRPC stubs or stream-based request/reply based on `COMM_MODE`. Read once at import time.
+```
+orchestrator/
+  engine/
+    __init__.py         — exports WorkflowEngine, WorkflowDefinition, WorkflowStep
+    types.py            — dataclasses: WorkflowStep, WorkflowDefinition, StepResult
+    state.py            — Redis hash CRUD + TRANSITION_LUA (extracted from saga.py / tpc.py)
+    executor.py         — WorkflowEngine class: register(), execute(), resume()
+    strategies/
+      __init__.py
+      saga.py           — _execute_saga(), run_compensation() (extracted from grpc_server.py)
+      tpc.py            — _execute_2pc() (extracted from grpc_server.py)
+    retry.py            — retry_forever(), retry_forward() (extracted from grpc_server.py)
+    recovery.py         — recover_incomplete_workflows() (replaces recovery.py)
+  workflows/
+    __init__.py
+    checkout.py         — make_checkout_workflow() definition (the ONLY checkout-specific file)
+```
 
-### Stream Names (Redis Cluster Hash Tag Compatibility)
+**What gets deleted or gutted:**
+- `orchestrator/saga.py` — replaced by `engine/state.py` + `engine/strategies/saga.py`
+- `orchestrator/tpc.py` — replaced by `engine/state.py` + `engine/strategies/tpc.py`
+- `orchestrator/recovery.py` — replaced by `engine/recovery.py`
+- `orchestrator/grpc_server.py` — `run_checkout()` and `run_2pc_checkout()` move into strategy modules; `OrchestratorServiceServicer` calls `engine.execute()` instead
 
-All stream names use hash tags for Redis Cluster slot routing (same pattern as existing `{saga:events}:checkout`):
+---
 
-| Stream | Purpose | Lives On |
-|--------|---------|----------|
-| `{stock:requests}` | Orchestrator -> Stock requests | Stock Redis Cluster |
-| `{stock:replies:<corr_id>}` | Stock -> Orchestrator replies | Stock Redis Cluster |
-| `{payment:requests}` | Orchestrator -> Payment requests | Payment Redis Cluster |
-| `{payment:replies:<corr_id>}` | Payment -> Orchestrator replies | Payment Redis Cluster |
+## Serialization: msgspec for Context Persistence
 
-**Critical architecture constraint:** Request and reply streams for a domain MUST live on that domain's Redis Cluster (co-located with domain data). The orchestrator therefore needs Redis connections to all domain clusters — not just its own SAGA/2PC state cluster.
-
-### Orchestrator Multi-Cluster Connections
-
-The orchestrator currently connects to one Redis Cluster (its own, for SAGA state). For stream-based communication, it needs connections to domain clusters:
+The workflow context dict (items, user_id, total_cost, idempotency keys) is persisted to Redis as `context_json`. Use `msgspec.json.encode/decode` — already a dependency, already used for event payloads:
 
 ```python
-# orchestrator/app.py — startup additions
-stock_db = RedisCluster(
-    startup_nodes=[ClusterNode(os.environ['STOCK_REDIS_HOST'], ...)],
-    password=os.environ['REDIS_PASSWORD'],
-    decode_responses=False,
-)
-payment_db = RedisCluster(
-    startup_nodes=[ClusterNode(os.environ['PAYMENT_REDIS_HOST'], ...)],
-    password=os.environ['REDIS_PASSWORD'],
-    decode_responses=False,
-)
+# engine/state.py
+import msgspec.json
+
+async def create_workflow_record(db, workflow_id: str, workflow_name: str,
+                                  strategy: str, ctx: dict) -> bool:
+    key = f"{{workflow:{workflow_id}}}"
+    created = await db.hsetnx(key, "state", "STARTED")
+    if not created:
+        return False
+    now = str(int(time.time()))
+    await db.hset(key, mapping={
+        "workflow_id": workflow_id,
+        "workflow_name": workflow_name,
+        "strategy": strategy,
+        "context_json": msgspec.json.encode(ctx).decode(),
+        "started_at": now,
+        "updated_at": now,
+    })
+    await db.expire(key, 7 * 24 * 3600)
+    return True
 ```
 
-New env vars needed for the orchestrator container: `STOCK_REDIS_HOST`, `STOCK_REDIS_PORT`, `PAYMENT_REDIS_HOST`, `PAYMENT_REDIS_PORT`. These replace the gRPC address env vars (`STOCK_GRPC_ADDR`, `PAYMENT_GRPC_ADDR`) when `COMM_MODE=queue`.
+**Why msgspec over json stdlib:** Already in requirements. 3-10x faster encode/decode than stdlib json. Consistent with how all other services serialize payloads. No reason to switch.
+
+---
+
+## Typing Conventions for the Engine API
+
+Using Python 3.13 standard library types — no `typing_extensions` needed:
+
+```python
+# engine/types.py
+from dataclasses import dataclass, field
+from typing import Protocol, Any, runtime_checkable
+
+@runtime_checkable
+class StepFn(Protocol):
+    async def __call__(self, ctx: dict[str, Any]) -> dict[str, Any]: ...
+
+type WorkflowId = str    # Python 3.12+ type alias syntax
+type StepName = str
+```
+
+**Why `Protocol` not `ABC`:** Step functions are plain async functions or lambdas — they should satisfy the interface without inheriting from anything. Protocol's structural subtyping means the existing transport functions (`reserve_stock`, `charge_payment`) satisfy `StepFn` without modification. ABC would require wrapping every transport function.
 
 ---
 
 ## Integration Points: What Changes vs. What Stays
 
-### Application Code Changes
+### Code That Changes
 
-| Component | Change | Effort |
-|-----------|--------|--------|
-| `orchestrator/client.py` | Add stream-based request/reply alongside gRPC stubs; facade dispatches based on `COMM_MODE` | Medium |
-| `orchestrator/app.py` | Initialize domain Redis cluster connections; read env var toggles; start reply consumer tasks if `COMM_MODE=queue` | Low |
-| `stock/app.py` | Add request stream consumer background task (dispatches to existing `StockServiceServicer` logic) | Medium |
-| `payment/app.py` | Add request stream consumer background task (dispatches to existing `PaymentServiceServicer` logic) | Medium |
-| New: `orchestrator/tpc.py` | 2PC coordinator state machine (modeled on `saga.py`, ~150 lines) | Medium |
-| New: `orchestrator/tpc_coordinator.py` | 2PC checkout execution (modeled on `grpc_server.py:run_checkout`, ~200 lines) | Medium |
-| New: `orchestrator/stream_client.py` | Stream-based request/reply functions (replaces gRPC calls, ~100 lines) | Medium |
-| New: `stock/stream_handler.py` | Stream consumer dispatching to existing Lua-backed business logic (~80 lines) | Low |
-| New: `payment/stream_handler.py` | Stream consumer dispatching to existing Lua-backed business logic (~80 lines) | Low |
+| File | Change | Approach |
+|------|--------|----------|
+| `orchestrator/grpc_server.py` | `run_checkout()`, `run_2pc_checkout()` move to engine strategies | Servicer calls `engine.execute("checkout", order_id, ctx)` |
+| `orchestrator/saga.py` | Gutted — logic extracted to `engine/` | Delete file after extraction |
+| `orchestrator/tpc.py` | Gutted — logic extracted to `engine/` | Delete file after extraction |
+| `orchestrator/recovery.py` | Replaced by `engine/recovery.py` | Single generic scanner replaces two duplicates |
+| `orchestrator/app.py` | Create engine, register checkout workflow, call engine recovery | Minor additions to `startup()` |
 
-### What Does NOT Change
+### Code That Does NOT Change
 
-- **Proto definitions** (`protos/*.proto`) — gRPC path stays as-is for fallback
-- **Lua scripts** in stock/payment `grpc_server.py` — business logic is transport-agnostic (reserve, release, charge, refund)
-- **Redis Cluster topology** — same 3+3 per domain, no new clusters
-- **Docker Compose / Kubernetes configs** — no new containers, no new ports (streams use existing Redis connections)
-- **External API routes** — Order service HTTP API unchanged
-- **`requirements.txt` files** — no new packages in any service
-- **`orchestrator/saga.py`** — SAGA state machine unchanged, used when `TRANSACTION_MODE=saga`
-- **`orchestrator/events.py`** — SAGA lifecycle events unchanged
-- **`orchestrator/consumers.py`** — existing consumer loops unchanged
+| Component | Reason Unchanged |
+|-----------|-----------------|
+| `transport.py` | Transport adapter is already abstract — engine calls the same functions |
+| `client.py` + `queue_client.py` | Transport implementations — untouched |
+| `events.py` + `consumers.py` | Event publishing and audit consumer — remain outside engine |
+| All `requirements.txt` files | Zero new dependencies |
+| Proto definitions + gRPC stubs | gRPC layer unaffected |
+| Stock / Payment services | No changes to domain services for this milestone |
+| Docker Compose / Kubernetes configs | No infrastructure changes |
+| External HTTP API (Order service routes) | API contract unchanged |
 
 ---
 
-## Timeout and Failure Handling
+## What the Refactoring Does NOT Include
 
-| Concern | gRPC (current) | Redis Streams (v2.0) |
-|---------|----------------|----------------------|
-| Call timeout | `timeout=RPC_TIMEOUT` (5s) | `XREAD BLOCK 5000` (5s) |
-| Service down | gRPC `UNAVAILABLE` status | XREAD timeout (no reply arrives) |
-| Circuit breaker | `@stock_breaker` decorator on gRPC wrapper | Same decorator on stream-based wrapper |
-| Retry logic | `retry_forward()` / `retry_forever()` | Same functions, wrapping stream calls instead of gRPC calls |
-| Idempotency | `idempotency_key` in protobuf request | `idempotency_key` field in stream message envelope |
+Based on PROJECT.md out-of-scope items, explicitly avoid:
 
----
-
-## Installation
-
-```bash
-# No changes needed. Existing requirements.txt files are sufficient for v2.0.
-# All services already have: redis[hiredis]==5.0.3, msgspec==0.18.6
-```
+| Anti-scope | Why Excluded |
+|------------|-------------|
+| Full event sourcing (append-only event log) | Adds a new infrastructure concern for zero grade benefit |
+| Workflow versioning (Temporal-style) | Complex to implement correctly in 6 days; not needed for course |
+| Signals, queries, child workflows | Temporal features beyond what course requires |
+| Plugin/dynamic loading of workflow definitions | Over-engineering; only one workflow (checkout) exists |
+| Replacing Redis hash state with event log | Breaks startup recovery scanner; no benefit |
 
 ---
 
@@ -247,24 +334,35 @@ New env vars needed for the orchestrator container: `STOCK_REDIS_HOST`, `STOCK_R
 
 | Claim | Confidence | Basis |
 |-------|------------|-------|
-| No new PyPI dependencies needed | HIGH | Verified by reading all 4 `requirements.txt` and mapping every v2.0 feature to existing library capabilities |
-| Redis Streams XADD/XREADGROUP/XREAD sufficient for request/reply | HIGH | Already exercised in `events.py` and `consumers.py`; redis-py 5.0.3 supports all needed methods |
-| 2PC implementable with same Redis hash + Lua CAS pattern | HIGH | Structurally identical to existing SAGA state machine in `saga.py` — different states, same primitives |
-| Orchestrator needs multi-cluster Redis connections for streams | HIGH | Follows from Redis Cluster hash tag constraint — streams must co-locate with domain data |
-| Circuit breaker pattern reusable for stream calls | HIGH | `circuitbreaker` library is a decorator; works on any async function regardless of transport |
-| Per-correlation reply streams viable | MEDIUM | Simple approach avoids shared-stream filtering complexity, but creates many short-lived keys. Verify under benchmark load. Alternative: single reply stream with correlation ID filtering. |
+| No new PyPI dependencies needed | HIGH | Full codebase analysis — every engine primitive maps to existing stdlib or dependencies |
+| `Protocol` structural subtyping works for `StepFn` | HIGH | Python 3.13 stdlib — verified `Protocol` works with async `__call__` since Python 3.8 |
+| Lua CAS script is reusable verbatim | HIGH | Script in `saga.py` and `tpc.py` are identical — trivially extractable |
+| `msgspec.json` sufficient for context serialization | HIGH | Already used for stream message payloads in `queue_client.py`; handles dict serialization |
+| `dataclasses` sufficient for `WorkflowStep` / `WorkflowDefinition` | HIGH | Pure data holders; no ORM, no validation beyond type hints needed |
+| Lambda closures work for step action/compensation | MEDIUM | Standard Python closure semantics — but requires careful `i=iid` default arg binding to avoid late-binding bugs. Known pattern; must be applied consistently. |
+| Engine recovery can replace both SAGA and TPC scanners | HIGH | Both scanners use identical scan_iter + hgetall + state-check pattern; differ only in dispatch logic |
+
+---
+
+## Installation
+
+```bash
+# No changes. Existing requirements.txt is sufficient for v3.0.
+# All engine primitives are Python stdlib (dataclasses, typing, asyncio) or already-installed packages.
+```
 
 ---
 
 ## Sources
 
-- Codebase analysis: `orchestrator/saga.py`, `orchestrator/events.py`, `orchestrator/consumers.py`, `orchestrator/client.py`, `orchestrator/grpc_server.py`, `stock/grpc_server.py`, all `requirements.txt`
-- [redis-py async documentation](https://redis.readthedocs.io/en/stable/examples/asyncio_examples.html)
-- [Martin Fowler — Two-Phase Commit patterns](https://martinfowler.com/articles/patterns-of-distributed-systems/two-phase-commit.html)
-- [Redis Streams async patterns](https://dev.to/streamersuite/async-job-queues-made-simple-with-redis-streams-and-python-asyncio-4410)
-- [Two-Phase Commit overview](https://medium.com/@abhi.strike/two-phase-commit-2pc-6f554f7772fa)
+- Codebase analysis: `orchestrator/saga.py`, `orchestrator/tpc.py`, `orchestrator/grpc_server.py`, `orchestrator/recovery.py`, `orchestrator/transport.py`, all `requirements.txt`
+- [Temporal Workflow Engine Design Principles](https://temporal.io/blog/workflow-engine-principles) — state persistence model, workflow-as-state-machine concept
+- [Python Protocol structural subtyping (PEP 544)](https://peps.python.org/pep-0544/) — async `__call__` Protocol for step functions
+- [Temporal Saga compensation pattern](https://temporal.io/blog/compensating-actions-part-of-a-complete-breakfast-with-sagas) — workflow step + compensation pairing
+- [Python dataclasses stdlib docs](https://docs.python.org/3/library/dataclasses.html) — `@dataclass` for `WorkflowStep` / `WorkflowDefinition`
 
 ---
 
-*Research complete: 2026-03-12*
-*Stack conclusion: Zero new dependencies. v2.0 is a pure application-code effort on existing infrastructure.*
+*Stack research for: DDS26-8 v3.0 Abstract Workflow Engine*
+*Researched: 2026-03-26*
+*Stack conclusion: Zero new dependencies. v3.0 is a pure application-code refactoring using Python stdlib (dataclasses, Protocol, asyncio) and the already-proven Redis hash + Lua CAS persistence pattern.*

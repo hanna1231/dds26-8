@@ -1,270 +1,192 @@
 # Feature Research
 
-**Domain:** 2PC transaction coordination and Redis Streams request/reply messaging for distributed checkout
-**Researched:** 2026-03-12
-**Confidence:** HIGH (2PC is a well-understood protocol; Redis Streams request/reply is application-level but well-documented)
+**Domain:** Abstract workflow engine orchestrator (Cadence/Temporal-inspired, SAGA + 2PC, course project)
+**Researched:** 2026-03-26
+**Confidence:** HIGH (based on existing codebase analysis + Temporal/Cadence/Dapr documentation)
 
-## Context: What Already Exists (v1.0)
+---
 
-All v1.0 features are shipped and validated with 0 consistency violations. This research covers ONLY the new v2.0 features:
-- **2PC** as an alternative to SAGA (env var switchable)
-- **Redis Streams message queues** as default inter-service communication (replacing gRPC as default, gRPC kept as fallback)
+## Context: What Already Exists
 
-Existing v1.0 components this builds on: SAGA orchestrator, gRPC Stock/Payment calls with idempotency, Redis Streams events with consumer groups, circuit breakers, Lua atomic operations, startup recovery, kill-test consistency.
+The existing `orchestrator/` service has all the *mechanics* of a workflow engine but zero abstraction:
+
+- `grpc_server.py` — `run_checkout()` and `run_2pc_checkout()` hardcode Stock/Payment service calls
+- `saga.py` — Lua CAS state machine, already generic enough to reuse
+- `tpc.py` — Lua CAS state machine, already generic enough to reuse
+- `transport.py` — re-exports service-specific named functions (`reserve_stock`, `charge_payment`, etc.)
+- `recovery.py` — hardcodes SAGA/TPC state names and Stock/Payment step logic
+
+The v3.0 goal is NOT to rebuild from scratch. It is to extract an engine layer that executes abstract step sequences, then re-express checkout as a workflow definition using that engine. The engine must not know about Stock or Payment.
+
+---
+
+## How Temporal/Cadence Approach This
+
+Temporal and Cadence split execution into two roles:
+
+**Workflow** — deterministic orchestration logic. Defines what steps to run, in what order, with what compensations. Does not touch external services directly. Does not know which services exist.
+
+**Activity** — non-deterministic work unit. An atomic callable that contacts an external service (reserve stock, charge payment). Can fail, be retried, and be compensated.
+
+The key insight from Temporal's design: the engine executes a *registered* sequence of `(action, compensation)` pairs. It knows nothing about what those callables do. The workflow definition registers the steps. The engine handles execution, persistence, retry, and compensation.
+
+For this project, "Activities" are the functions already in `transport.py`. The gap is the registration and execution layer that sits between the hardcoded orchestration logic and those transport functions.
 
 ---
 
 ## Feature Landscape
 
-### Table Stakes (Required for v2.0 Milestone)
-
-Features the milestone explicitly requires. Missing any = incomplete milestone.
+### Table Stakes (Must Exist for the Abstraction to Work)
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| 2PC state machine with Lua CAS | Core protocol: PREPARING, PREPARED, COMMITTING, COMMITTED, ABORTING, ABORTED. Without explicit states, cannot reason about crash recovery. | MEDIUM | Parallels `saga.py`. Reuse Lua CAS transition pattern. New module `twopc.py`. |
-| 2PC coordinator flow in orchestrator | Orchestrator drives prepare-all-then-commit-or-abort. PROJECT.md requires "Orchestrator as 2PC coordinator." | MEDIUM | New `run_2pc_checkout()` alongside existing `run_checkout()`. Same retry/compensation infrastructure. |
-| 2PC participant logic in Stock/Payment | Participants must handle PREPARE (tentatively lock resources), COMMIT (finalize), ABORT (release). Currently Stock/Payment do immediate reserve/charge in one step. 2PC splits this into two phases. | HIGH | Hardest feature. Current Lua scripts do atomic reserve-in-one-step. 2PC needs: (1) PREPARE = write tentative reservation with flag, (2) COMMIT = mark tentative as final, (3) ABORT = delete tentative record. New Lua scripts. |
-| 2PC transaction log persistence | Coordinator must persist decision before sending phase-2 messages. Classic 2PC requirement: if coordinator crashes after deciding COMMIT but before notifying participants, recovery replays the decision. | MEDIUM | Redis hash `{2pc:<order_id>}` storing state, participants, votes, decision. Same pattern as `{saga:<order_id>}`. |
-| 2PC timeout and abort on failure | If any participant votes NO or times out during prepare, coordinator ABORTs all. Fundamental 2PC safety guarantee. | MEDIUM | Reuse `retry_forward` bounded retry. On failure, send ABORT to all participants that received PREPARE. |
-| 2PC recovery scanner | On startup, scan for incomplete 2PC transactions and drive to terminal state. Coordinator crash between PREPARED and COMMITTED is THE classic 2PC failure. | MEDIUM | Extend `recovery.py` pattern. If decision was COMMIT, replay commit. If no decision logged, ABORT (presumed-abort). |
-| 2PC idempotency | Duplicate PREPARE/COMMIT/ABORT must be safe. Coordinator retries must not cause double-reservations. | MEDIUM | Reuse idempotency key pattern. `{2pc:<order_id>}:prepare:<service>`, `{2pc:<order_id>}:commit:<service>`. |
-| Redis Streams request/reply messaging | Replace synchronous gRPC with async message-based communication. Orchestrator publishes request to service's request stream, service reads and publishes reply to reply stream. | HIGH | No built-in request/reply in Redis Streams. Must implement: correlation IDs, reply routing, timeout handling. |
-| Correlation ID for request/reply | Each request needs unique correlation ID. Reply includes same ID so caller matches response to request. Without this, concurrent requests are indistinguishable. | MEDIUM | Use `order_id:step` as correlation ID (same pattern as idempotency keys). Caller blocks on XREAD with correlation ID filter. |
-| Reply timeout handling | Caller must not block forever waiting for reply. Configurable timeout per request. | LOW | XREAD with BLOCK timeout. If timeout expires, treat as failure. Integrate with circuit breaker. |
-| `TRANSACTION_MODE` env var toggle | PROJECT.md: "env var toggle alongside SAGA." Must switch between SAGA and 2PC. | LOW | `TRANSACTION_MODE=saga` (default) or `TRANSACTION_MODE=2pc`. Orchestrator checkout dispatches accordingly. |
-| `COMM_MODE` env var toggle | PROJECT.md: "gRPC kept as fallback communication path (env var toggle)." | LOW | `COMM_MODE=grpc` (fallback) or `COMM_MODE=queue` (default). `client.py` switches transport. |
-| Consumer group per service for requests | Each Stock/Payment instance joins consumer group on its request stream. Load-balances requests across replicas. | LOW | Existing `consumers.py` pattern applies directly. XREADGROUP with `>`, XAUTOCLAIM for stuck messages. |
+| `WorkflowStep` dataclass: `(name, action, compensation)` | Every workflow engine (Temporal, Cadence, liteflow, py-saga-orchestration) uses this as the atomic unit — a paired forward+undo callable | LOW | `action` and `compensation` are async callables with signature `(ctx: dict) -> dict`; `name` is used for idempotency key derivation and log lines |
+| `WorkflowDefinition` dataclass: `(name, steps, strategy)` | Engine needs to know what to execute without knowing what steps do; strategy selects SAGA vs 2PC execution path | LOW | `strategy: Literal["saga", "2pc"]`; registered once at startup, reused per execution |
+| `WorkflowEngine.execute(workflow_id, definition, context)` | Single entry point replaces `run_checkout()` and `run_2pc_checkout()`; caller is transport-agnostic | MEDIUM | Routes to `_run_saga()` or `_run_2pc()` internally based on `definition.strategy`; returns `{"success": bool, "error_message": str}` |
+| Durable execution state in Redis | Engine must survive crashes — proven pattern from `saga.py`/`tpc.py`; without persistence, recovery is impossible | LOW | Reuse Lua CAS pattern; key schema becomes `{workflow:<id>}` instead of `{saga:<id>}` or `{tpc:<id>}`; stores step index, completion flags, strategy |
+| Per-step completion flags | Prevents double-execution of compensations on crash recovery; `stock_restored`/`refund_done` generalized to `step_0_done`, `step_1_done` | LOW | Flag written atomically with Lua CAS transition; read by compensation and recovery to know which steps ran |
+| Reverse-order compensation on step failure | Core SAGA guarantee — engine triggers compensation without knowing what it is undoing; only knows step index and whether it completed | MEDIUM | Track completed step indices; iterate in reverse calling `step.compensation(ctx)` for each completed step; infinite retry for each compensation callable |
+| Recovery scanner updated to engine API | Recovery must resume workflows without knowing about Stock/Payment specifics; must read generic state and call engine resume | MEDIUM | `recover_incomplete_workflows()` scans `{workflow:*}` keys, reads strategy + step index, delegates to engine |
+| Checkout re-expressed as workflow definition | Demonstrates the abstraction is real; validates that the engine works end-to-end | LOW | New `checkout_workflow.py` creates `WorkflowDefinition` with steps pointing to `transport.py` functions; `grpc_server.py` only calls `engine.execute()` |
 
-### Differentiators (Grade Boosters)
-
-Beyond minimum requirements; demonstrate deeper understanding.
+### Differentiators (Grade-Relevant, Course Demo Value)
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Unified test suite (SAGA/2PC x gRPC/queue) | Run same benchmark and consistency tests in all 4 mode combinations. Proves both patterns achieve 0 consistency violations. Very high grade value. | LOW | Parameterize existing 37 integration tests + kill-tests with env vars. Minimal code, maximum proof. |
-| 2PC lifecycle events | Publish 2PC events to Redis Streams audit trail. Same pattern as SAGA events in `events.py`. | LOW | New event types: `2pc_prepare_sent`, `2pc_vote_yes`, `2pc_vote_no`, `2pc_committed`, `2pc_aborted`. |
-| Presumed-abort optimization | If coordinator has no logged COMMIT decision for a transaction, presume ABORT. Participants that timeout waiting for phase-2 can safely abort. Reduces Redis writes. | LOW | Standard 2PC optimization. Simplifies recovery: absence of commit record = abort. |
-| Dead letter queue for failed requests | Request messages that fail processing N times move to dead-letter stream. Prevents infinite retry loops. | LOW | Copy existing dead-letter pattern from `consumers.py`. |
-| Graceful communication mode switching | Allow runtime switching between gRPC and queue modes without restart (hot-swap). | MEDIUM | Probably overkill for course, but would demonstrate deep understanding. Not recommended unless time permits. |
+| Same `WorkflowDefinition` runs under both SAGA and 2PC | Demonstrates the engine is genuinely generic — step callables are reused, execution protocol differs | MEDIUM | `WorkflowDefinition.strategy` field selects execution path at registration time; no step change needed to switch patterns |
+| Named steps with execution log | Human-readable log lines like `"[workflow:abc] step reserve_stock: OK"` instead of scattered messages; aids debugging during live demo | LOW | Use `step.name` in all log lines within engine; zero cost, high observability value |
+| Context dict passed through to all step callables | Steps like `reserve_stock` need `order_id`, `user_id`, `items`, `total_cost` — passing as opaque dict keeps engine agnostic | LOW | All callables share signature `async (ctx: dict) -> dict`; engine never reads ctx contents |
+| `WorkflowEngine` as injectable dependency | Instantiate with `db` reference; pass to servicer constructor; makes unit testing straightforward without Redis | LOW | No global mutable state in engine module; all state is in Redis or passed via arguments |
 
-### Anti-Features (Do Not Build)
+### Anti-Features (Explicitly Out of Scope)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Distributed locks (Redlock) for 2PC prepare | "Need to lock resources during prepare phase" | Redlock adds latency and known-flawed consensus. Redis Lua scripts already provide atomicity. Tentative reservation via Lua CAS is simpler and faster. | Lua scripts with "tentative" flag for prepared-but-not-committed resources. |
-| Full XA transaction protocol | "2PC should use proper XA" | Redis does not support XA. Application-level 2PC with Redis-persisted coordinator state is the correct approach for this stack. | Application-level 2PC with Lua-atomic participant operations. |
-| Separate message broker (RabbitMQ/Kafka) | "Redis Streams is not a real message queue" | Adds infra, CPU budget, operational complexity, and new client library. Redis Streams with consumer groups already provides needed semantics. Course constraint is Redis. | Redis Streams with consumer groups, XAUTOCLAIM, dead-letter handling. |
-| Blocking resource locks during 2PC | "Participants should hold locks until commit/abort" | Redis has no database-level locks. Simulating blocking locks via key TTL risks deadlocks and stale locks on crashes. | Tentative reservation pattern: PREPARE writes tentative record, COMMIT finalizes, ABORT deletes. No blocking needed. |
-| Two-way streaming for message queue | "Bidirectional channels for richer communication" | Overengineered for checkout. Hard to reason about ordering and backpressure. | Simple request stream + reply stream with correlation IDs. |
-| 2PC with blocking participants | "True 2PC blocks participants until coordinator decides" | In a Redis-backed system, blocking means resource starvation. Tentative-write + async commit achieves same safety without blocking threads. | Tentative writes: PREPARE writes data marked as "tentative", reads skip tentative data, COMMIT removes the flag, ABORT deletes. |
+| Workflow versioning (Temporal-style) | "What if checkout logic changes while workflows are in-flight?" | Requires execution history replay, determinism constraints, version branching — massive complexity for zero course grade benefit | Document deployed version; clear Redis on breaking schema changes during development |
+| Signals and queries (Temporal-style) | "Can external callers inject events into a running workflow?" | Requires persistent mailboxes, signal delivery guarantees, async handoff — not needed for synchronous request-response checkout | Checkout is request-response; caller waits for `execute()` to return |
+| Child workflows | "Can one workflow trigger another workflow?" | Recursive engine calls, cross-workflow compensation coordination — not needed for single-domain checkout | Flat step sequence is sufficient for this use case |
+| Activity worker pools | "Can activities run on separate worker processes?" | Requires worker registration, task queues, heartbeating — that is a full Temporal deployment, not an in-process engine | Activities are in-process callables; `transport.py` already abstracts the remote call |
+| Full event sourcing (rebuild state from event replay) | "Can we reconstruct workflow state from Redis Streams history?" | Stream cleanup complexity, snapshot gaps, replay ordering — significantly complex for zero grade benefit | Redis hash as write-ahead log (current pattern) is sufficient; per-step flags are the durable state |
+| Dynamic step sequences (add steps at runtime) | "Can the checkout workflow change which steps run based on conditions?" | Requires re-entrant execution, mid-flight schema changes — untestable in course timeline | Register all steps at startup; strategy enum provides sufficient flexibility |
+| Timeout-per-step (Temporal-style activity timeouts) | "What if a step hangs forever?" | Adds per-step timer management to the engine core — significant complexity | Circuit breakers on transport layer already prevent hangs; `retry_forward` bounded attempts already cap wait time |
+| UI or workflow visualization | "Show a graph of workflow state" | Scope creep; no grade benefit | Step names in log lines are sufficient observability for course demo |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[TRANSACTION_MODE env var toggle]
-    └──requires──> [2PC coordinator flow]
-                       └──requires──> [2PC state machine]
-                       └──requires──> [2PC participant logic (Stock + Payment)]
-                       └──requires──> [2PC transaction log persistence]
-                       └──requires──> [2PC timeout/abort handling]
-                       └──requires──> [2PC idempotency]
+WorkflowStep (name, action, compensation)
+    └──required-by──> WorkflowDefinition (steps list + strategy)
+                          └──required-by──> WorkflowEngine.execute()
+                                                └──required-by──> checkout_workflow.py definition
+                                                └──required-by──> recovery scanner
 
-[2PC recovery scanner]
-    └──requires──> [2PC transaction log persistence]
-    └──requires──> [2PC participant logic]
+Per-step completion flags (step_N_done in Redis hash)
+    └──required-by──> Reverse-order compensation (knows which steps to undo)
+    └──required-by──> Recovery scanner (knows which step to resume from)
 
-[COMM_MODE env var toggle]
-    └──requires──> [Redis Streams request/reply messaging]
-                       └──requires──> [Correlation ID matching]
-                       └──requires──> [Reply timeout handling]
-                       └──requires──> [Consumer group per service]
+Durable execution state ({workflow:<id>} Redis hash)
+    └──required-by──> Per-step completion flags
+    └──required-by──> Strategy field (stored for recovery to know which executor to use)
 
-[Unified test suite]
-    └──requires──> [TRANSACTION_MODE toggle]
-    └──requires──> [COMM_MODE toggle]
+WorkflowEngine injectable dependency
+    └──enhances──> Unit testability (no global state)
+    └──required-by──> grpc_server.py refactor (receives engine in constructor)
 ```
 
 ### Dependency Notes
 
-- **2PC coordinator requires participant logic:** Cannot complete PREPARE without participants that understand prepare/commit/abort. Both sides must be built together.
-- **Message queue requires correlation IDs:** Without correlation, concurrent requests produce unroutable replies. This is the foundational primitive.
-- **Env var toggles require both implementations:** The toggle is trivial (if/else dispatch), but both code paths must exist and be tested.
-- **Recovery scanner requires persistence:** Cannot recover what was not persisted. 2PC log must be written before recovery can read it.
-- **Test suites require toggles:** Parameterized tests exercise both modes through the same toggle mechanism.
-
----
-
-## How 2PC Works (Expected Behavior)
-
-### Protocol Phases
-
-**Phase 1 -- Prepare:**
-1. Coordinator creates 2PC transaction record in Redis (state: PREPARING)
-2. Coordinator sends PREPARE to all participants (Stock, Payment) with transaction details
-3. Each participant tentatively executes the operation (reserve stock, hold payment) WITHOUT finalizing
-4. Each participant persists its prepared state and votes YES or NO
-5. Coordinator collects all votes
-
-**Phase 2 -- Commit or Abort:**
-- If ALL votes are YES: coordinator logs COMMITTING decision, sends COMMIT to all participants, participants finalize tentative operations, coordinator logs COMMITTED
-- If ANY vote is NO (or timeout): coordinator logs ABORTING, sends ABORT to all participants, participants release tentative operations, coordinator logs ABORTED
-
-### Key Difference from SAGA
-
-| Aspect | SAGA (v1.0) | 2PC (v2.0) |
-|--------|-------------|------------|
-| Execution | Sequential: reserve stock, then charge payment | Parallel prepare: prepare stock AND prepare payment simultaneously |
-| Failure handling | Compensating transactions (undo what was done) | Abort (nothing was finalized, just release tentative holds) |
-| Atomicity guarantee | Eventual consistency via compensation | Strong consistency via all-or-nothing commit |
-| Blocking | Non-blocking (compensations run async) | Potentially blocking (participants wait for phase-2) |
-| Recovery complexity | Resume from any step, compensate backward | Simple: if COMMIT logged, replay commits; if not, abort |
-
-### Tentative Reservation Pattern for Redis
-
-Since Redis has no native prepare/commit, 2PC participants must implement tentative operations:
-
-**Stock PREPARE:** Write `{item:<id>}:tentative:{tx_id}` with reserved quantity. Do NOT decrement actual stock yet. Lua script atomically checks available stock (actual minus sum of tentative) and writes tentative record.
-
-**Stock COMMIT:** Atomically decrement actual stock AND delete tentative record. Lua script does both in one EVAL.
-
-**Stock ABORT:** Delete tentative record. Lua script removes the key.
-
-**Payment PREPARE/COMMIT/ABORT:** Same pattern with `{user:<id>}:tentative:{tx_id}`.
-
----
-
-## How Redis Streams Request/Reply Works (Expected Behavior)
-
-### Message Flow
-
-```
-Orchestrator                    Stock Service
-    |                               |
-    |-- XADD {stock:requests} -->   |
-    |   {correlation_id, action,    |
-    |    item_id, quantity, ...}     |
-    |                               |-- XREADGROUP (consumer group)
-    |                               |-- process request
-    |                               |-- XADD {stock:replies} -->
-    |                               |   {correlation_id, success, ...}
-    |<-- XREAD {stock:replies} --   |
-    |   (filter by correlation_id)  |
-```
-
-### Key Design Decisions
-
-**Request streams:** One per service type: `{stock:requests}`, `{payment:requests}`. Consumer groups distribute requests across service replicas.
-
-**Reply streams:** One per service type: `{stock:replies}`, `{payment:replies}`. Orchestrator polls with XREAD BLOCK, filtering by correlation ID.
-
-**Correlation ID:** `{order_id}:{step}` -- natural, unique, matches existing idempotency key pattern.
-
-**Timeout:** XREAD BLOCK with configurable timeout (e.g., 5 seconds, matching current `RPC_TIMEOUT`). Timeout = same handling as gRPC timeout.
-
-**Idempotency:** Same idempotency_key mechanism as gRPC path. Participant checks idempotency before processing, returns cached result if already processed.
-
-### Integration with `client.py`
-
-Current `client.py` has functions like `reserve_stock(item_id, quantity, idempotency_key)`. The interface stays identical. Under the hood:
-- `COMM_MODE=grpc`: call gRPC stub (current behavior)
-- `COMM_MODE=queue`: XADD to request stream, XREAD reply stream with correlation ID, parse response
-
-This keeps the SAGA and 2PC coordinators transport-agnostic.
-
----
-
-## Existing v1.0 Components: Reuse Analysis
-
-| v1.0 Component | Reuse for 2PC | Reuse for Message Queues |
-|----------------|---------------|--------------------------|
-| `saga.py` Lua CAS transitions | YES -- same Lua pattern, different state names | NO |
-| `client.py` gRPC wrappers | PARTIAL -- need new RPCs for prepare/commit/abort | YES -- abstract same interface, swap transport |
-| `events.py` fire-and-forget | YES -- publish 2PC lifecycle events | NO |
-| `consumers.py` consumer groups | NO | YES -- same XREADGROUP/XAUTOCLAIM for request processing |
-| `recovery.py` startup scanner | YES -- extend for 2PC record scanning | NO |
-| `circuit.py` circuit breakers | YES -- wrap 2PC calls | YES -- wrap queue timeouts |
-| Stock/Payment Lua scripts | PARTIAL -- idempotency pattern reusable, need new tentative scripts | NO direct reuse |
-| Stock/Payment gRPC servicers | NO -- need new RPCs | YES -- handlers reusable, called from queue consumer |
-| Redis Cluster hash tags | YES -- `{2pc:<order_id>}` | YES -- `{stock:requests}` |
+- `WorkflowStep` is the atom — must exist before `WorkflowDefinition`.
+- Per-step flags must be designed before writing compensation logic — compensation reads flags to decide what to undo.
+- The durable state Redis schema (field names) must be finalized before writing recovery — recovery must know exactly what fields to read.
+- `checkout_workflow.py` depends on the engine API being stable — write it after the engine contract is settled.
+- Recovery scanner depends on checkout workflow definition existing to know what step callables to pass to engine resume.
 
 ---
 
 ## MVP Definition
 
-### Build First: Core 2PC
+### Launch With (v3.0 — course deadline)
 
-Minimum to demonstrate 2PC as alternative transaction pattern.
+- [ ] `WorkflowStep` dataclass: `name: str`, `action: Callable[[dict], Awaitable[dict]]`, `compensation: Callable[[dict], Awaitable[dict]]` — the atomic unit
+- [ ] `WorkflowDefinition` dataclass: `name: str`, `steps: list[WorkflowStep]`, `strategy: Literal["saga", "2pc"]` — the registration object
+- [ ] `WorkflowEngine` class: `__init__(db)`, `execute(workflow_id, definition, context) -> dict` — single entry point
+- [ ] Internal SAGA executor: forward execution with bounded retry, reverse compensation with infinite retry, Lua CAS state transitions — migrated and generalized from `run_checkout()`
+- [ ] Internal 2PC executor: concurrent prepare phase, WAL decision write, phase-2 commit/abort — migrated and generalized from `run_2pc_checkout()`
+- [ ] Durable state schema: `{workflow:<id>}` hash with `step_N_done` flags replacing `stock_reserved`/`payment_charged`; `strategy` and `step_count` stored for recovery
+- [ ] `checkout_workflow.py`: `WorkflowDefinition` with steps pointing to `transport.py` functions; engine knows nothing about Stock or Payment
+- [ ] Recovery scanner generalized: `recover_incomplete_workflows()` reads `{workflow:*}` keys, resumes via engine
+- [ ] `grpc_server.py` refactored: `OrchestratorServiceServicer` receives `WorkflowEngine` instance, calls `engine.execute()` only
 
-- [ ] `twopc.py` -- 2PC state machine with Lua CAS transitions
-- [ ] Stock participant: PrepareReserve/CommitReserve/AbortReserve (Lua scripts for tentative reservation)
-- [ ] Payment participant: PrepareCharge/CommitCharge/AbortCharge (Lua scripts for tentative hold)
-- [ ] `run_2pc_checkout()` in orchestrator -- prepare all, then commit or abort
-- [ ] 2PC transaction log in Redis hash -- crash safety
-- [ ] `TRANSACTION_MODE` env var toggle
-- [ ] 2PC recovery scanner
+### Add After Core Works (stretch within v3.0)
 
-### Build Second: Message Queues
+- [ ] Structured execution log — step names in log lines, engine logs step success/failure with workflow_id context
+- [ ] `WorkflowEngine.get_status(workflow_id) -> dict` — reads Redis hash, returns current step, state, error; useful for health endpoint enrichment
 
-Replace gRPC with Redis Streams request/reply.
+### Defer (Out of Scope for Course)
 
-- [ ] Request/reply transport layer in `client.py` -- same function signatures, queue transport
-- [ ] Request stream per service (`{stock:requests}`, `{payment:requests}`)
-- [ ] Reply stream with correlation IDs (`{stock:replies}`, `{payment:replies}`)
-- [ ] Consumer loop in Stock/Payment reading request stream, dispatching to existing handlers
-- [ ] `COMM_MODE` env var toggle
-- [ ] Timeout and circuit breaker integration
-
-### Build Third: Validation
-
-Prove everything works under benchmark.
-
-- [ ] Parameterized integration tests (SAGA/2PC x gRPC/queue)
-- [ ] Kill-test in 2PC + queue mode
-- [ ] Benchmark with 0 consistency violations in all 4 mode combinations
+- [ ] Workflow versioning
+- [ ] Signals and queries
+- [ ] Activity worker pools
+- [ ] Dynamic step sequences
+- [ ] Per-step timeouts
+- [ ] Workflow visualization
 
 ---
 
 ## Feature Prioritization Matrix
 
-| Feature | User Value | Implementation Cost | Priority |
+| Feature | Grade Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| 2PC state machine + Lua CAS | HIGH | MEDIUM | P1 |
-| 2PC participant logic (Stock + Payment) | HIGH | HIGH | P1 |
-| 2PC coordinator flow | HIGH | MEDIUM | P1 |
-| 2PC transaction log persistence | HIGH | LOW | P1 |
-| 2PC recovery scanner | HIGH | MEDIUM | P1 |
-| TRANSACTION_MODE env var toggle | HIGH | LOW | P1 |
-| Redis Streams request/reply | HIGH | HIGH | P1 |
-| Correlation ID matching | HIGH | MEDIUM | P1 |
-| COMM_MODE env var toggle | HIGH | LOW | P1 |
-| Reply timeout handling | MEDIUM | LOW | P1 |
-| Consumer group per service | MEDIUM | LOW | P2 |
-| Unified test suite (4 combinations) | HIGH | LOW | P2 |
-| 2PC event publishing | LOW | LOW | P2 |
-| Presumed-abort optimization | LOW | LOW | P3 |
-| Dead letter queue for requests | LOW | LOW | P3 |
+| `WorkflowStep` + `WorkflowDefinition` dataclasses | HIGH — defines the abstraction | LOW — pure data, no logic | P1 |
+| `WorkflowEngine.execute()` routing dispatch | HIGH — entry point for all execution | LOW — thin strategy dispatch | P1 |
+| Internal SAGA executor (migrated from `run_checkout`) | HIGH — existing logic, new generic home | MEDIUM — refactor field names, step indexing | P1 |
+| Internal 2PC executor (migrated from `run_2pc_checkout`) | HIGH — shows both patterns in one engine | MEDIUM — same refactor as SAGA | P1 |
+| Durable state schema generalization | HIGH — enables crash recovery | MEDIUM — rename fields, update Lua CAS | P1 |
+| `checkout_workflow.py` workflow definition | HIGH — proves the abstraction works | LOW — wire existing transport.py functions | P1 |
+| Recovery scanner generalization | HIGH — correctness under crashes | MEDIUM — update scan pattern, call engine | P1 |
+| `grpc_server.py` refactor to use engine | HIGH — removes hardcoded logic | LOW — replace function calls with engine.execute | P1 |
+| Named step execution logging | LOW — quality of life | LOW — add step.name to existing log lines | P2 |
+| `WorkflowEngine.get_status()` | LOW — observability | LOW — read Redis hash, format dict | P2 |
 
 **Priority key:**
-- P1: Must have for v2.0 milestone
-- P2: Should have, add when core is working
-- P3: Nice to have, defer if time is short
+- P1: Must have — defines the v3.0 milestone
+- P2: Should have — add when P1 is stable and tested
+- P3: Nice to have — not for this milestone
+
+---
+
+## Comparable System Analysis
+
+| Aspect | Temporal | Cadence | Dapr Workflow | This Project (v3.0 Target) |
+|--------|----------|---------|---------------|---------------------------|
+| Workflow unit | Deterministic function | Deterministic function | Decorated async function | `WorkflowDefinition` dataclass |
+| Activity unit | `@activity.defn` function | Activity method | `@activity_method` | `WorkflowStep.action` async callable |
+| Compensation unit | Manual saga helper class | Manual try/catch + rollback | Manual try/catch | `WorkflowStep.compensation` async callable, auto-invoked by engine |
+| State persistence | Temporal server event history | Cadence server event history | Dapr state store | Redis hash (existing Lua CAS pattern) |
+| Recovery mechanism | Automatic event replay | Automatic event replay | Automatic checkpoint replay | Recovery scanner + per-step flags (existing pattern extended) |
+| Execution strategies | SAGA only (compensating) | SAGA only (compensating) | SAGA only (compensating) | SAGA + 2PC via strategy enum (course differentiator) |
+| Worker model | Separate worker processes | Separate worker processes | In-process | In-process callables via transport adapter |
+| Scope | Full production platform | Full production platform | Framework + sidecar | Minimal in-process engine for course project |
+
+The key simplification vs full Temporal/Cadence: no event history log, no deterministic replay, no separate worker pool, no versioning. All are correct omissions given the existing Redis hash WAL and course project scope.
 
 ---
 
 ## Sources
 
-- [Martin Fowler - Two-Phase Commit](https://martinfowler.com/articles/patterns-of-distributed-systems/two-phase-commit.html) -- authoritative pattern description
-- [Two-Phase Commit Wikipedia](https://en.wikipedia.org/wiki/Two-phase_commit_protocol) -- protocol specification
-- [2PC in Microservices - DEV Community](https://dev.to/ovichowdhury/demystifying-two-phase-commit-2pc-for-distributed-transaction-in-microservices-5ca7) -- application-level implementation
-- [SAGA vs 2PC - GeeksforGeeks](https://www.geeksforgeeks.org/system-design/difference-between-saga-pattern-and-2-phase-commit-in-microservices/) -- pattern comparison
-- [Redis Streams Docs](https://redis.io/docs/latest/develop/data-types/streams/) -- official stream documentation
-- [Redis Blog: Sync and Async Communication](https://redis.io/blog/what-to-choose-for-your-synchronous-and-asynchronous-communication-needs-redis-streams-redis-pub-sub-kafka-etc-best-approaches-synchronous-asynchronous-communication/) -- Redis messaging patterns
-- [redis-py Async Examples](https://redis.readthedocs.io/en/stable/examples/asyncio_examples.html) -- async Redis Streams usage
-- [Redis Streams Wrong Assumptions](https://redis.io/blog/youre-probably-thinking-about-redis-streams-wrong/) -- stream entry structure clarification
+- [Temporal Workflow Engine Principles](https://temporal.io/blog/workflow-engine-principles) — atomicity requirements, task queue patterns, transactional consistency
+- [Cadence Workflow Concepts](https://cadenceworkflow.io/docs/concepts/workflows) — fault-oblivious stateful workflow abstraction
+- [Cadence Activity Concepts](https://cadenceworkflow.io/docs/concepts/activities) — activity registration via task lists, retry policies
+- [Dapr Workflow Patterns](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-patterns/) — compensation structure, chaining pattern, error handling
+- [py-saga-orchestration](https://github.com/cdddg/py-saga-orchestration) — `OrchestrationBuilder.add_step(action, compensation)` pattern, fluent API
+- [Architecture Weekly: Workflow Engine Design Proposal](https://www.architecture-weekly.com/p/workflow-engine-design-proposal-tell) — minimal vs nice-to-have features, event stream model
+- [liteflow Python workflow engine](https://github.com/danielgerlag/liteflow) — `StepBody` abstract class pattern
+- [Comparing Orchestration Frameworks: Cadence, Conductor, Temporal](https://medium.com/@natesh.somanna/comparing-orchestration-frameworks-ubers-cadence-netflix-conductor-and-temporal-3778cff24574) — abstractions comparison
+- Existing codebase: `orchestrator/grpc_server.py`, `orchestrator/saga.py`, `orchestrator/tpc.py`, `orchestrator/recovery.py`, `orchestrator/transport.py`
 
 ---
-*Feature research for: 2PC and Redis Streams message queues for distributed checkout*
-*Researched: 2026-03-12*
+
+*Feature research for: Abstract workflow engine orchestrator (v3.0 milestone)*
+*Researched: 2026-03-26*
