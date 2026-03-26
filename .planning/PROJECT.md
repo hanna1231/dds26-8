@@ -38,38 +38,42 @@ Checkout transactions must never lose money or item counts — consistency is no
 - ✓ 37 integration tests passing — v1.0
 - ✓ wdm-project-benchmark with 0 consistency violations — v1.0
 - ✓ Automated kill-test scripts — v1.0
+- ✓ 2PC as alternative transaction coordination pattern (env var toggle) — v2.0
+- ✓ Orchestrator as 2PC coordinator (prepare/commit/abort phases) — v2.0
+- ✓ Redis Streams message queues as default inter-service communication — v2.0
+- ✓ gRPC kept as fallback communication path (env var toggle) — v2.0
 
 ### Active
 
-- [ ] 2PC as alternative transaction coordination pattern (env var toggle alongside SAGA)
-- [ ] Orchestrator as 2PC coordinator (prepare/commit/abort phases)
-- [ ] Redis Streams message queues as default inter-service communication
-- [ ] gRPC kept as fallback communication path (env var toggle)
+- [ ] Generic workflow engine as separate orchestrator artifact (Cadence/Temporal-inspired)
+- [ ] Checkout rewritten as workflow definition using abstract engine API
+- [ ] Engine supports both SAGA and 2PC execution strategies
+- [ ] Codebase refactoring for clarity, consistency, and maintainability
 
-## Current Milestone: v2.0 2PC & Message Queues
+## Current Milestone: v3.0 Abstract Orchestrator & Refactoring
 
-**Goal:** Add Two-Phase Commit as an alternative transaction pattern and migrate inter-service communication to Redis Streams message queues, with env var toggles for both SAGA/2PC and queue/gRPC paths.
+**Goal:** Abstract SAGA/2PC coordination into a generic workflow engine artifact and refactor the codebase for quality, maintainability, and interview readiness.
 
 **Target features:**
-- 2PC transaction coordination via orchestrator, switchable with SAGA
-- Redis Streams-based request/reply inter-service messaging (replacing gRPC as default)
-- Environment variable configuration for transaction pattern and communication mode
+- Generic workflow engine that executes abstract step sequences (action + compensation) without knowing about specific services
+- Checkout defined as a workflow registration (steps with compensations), not hardcoded orchestrator logic
+- Engine supports both SAGA (compensating) and 2PC (prepare/commit/abort) execution strategies
+- Codebase refactoring for clarity, consistency, and maintainability
 
 ### Out of Scope
 
-- Phase 2 SAGA Orchestrator abstraction as separate artifact — deferred to April 1 deadline
 - Authentication/authorization — not required by project spec
 - Custom benchmark creation — bonus points only
-- Two-Phase Commit (2PC) — ~~Redis doesn't support XA transactions~~ Now required; implementing as alternative to SAGA (v2.0)
 - Full event sourcing — significant complexity for zero grade benefit
 - Distributed locking (Redlock) — idempotency + optimistic concurrency is correct approach
+- Full Temporal/Cadence feature set (versioning, signals, queries, child workflows) — only core workflow abstraction needed
 
 ## Context
 
 **Shipped:** v1.0 on 2026-03-11
 **Codebase:** 5,553 LOC Python across 4 services + tests
 **Tech stack:** Quart+Uvicorn, gRPC (grpcio), Redis Cluster (redis.asyncio), Redis Streams, Lua scripting, Docker Compose, Kubernetes + Helm
-**Architecture:** SAGA orchestrator pattern with gRPC communication, event-driven coordination via Redis Streams, per-domain Redis Cluster HA, circuit breakers + startup recovery for fault tolerance
+**Architecture:** SAGA + 2PC orchestrator with dual communication (gRPC + Redis Streams queues), event-driven coordination, per-domain Redis Cluster HA, circuit breakers + startup recovery for fault tolerance
 
 **Course:** Distributed Data Systems (DDS), TU Delft Master's
 **Team:** dds26-8
@@ -101,5 +105,22 @@ Checkout transactions must never lose money or item counts — consistency is no
 | Fire-and-forget event publishing | Checkout never blocked by event failures | ✓ Good — events are audit trail, not critical path |
 | Custom redis:7.2 image | bitnami/redis-cluster:8.0 unavailable | ⚠️ Revisit — works but adds maintenance burden |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-03-12 after v2.0 milestone start*
+*Last updated: 2026-03-26 after v3.0 milestone start*

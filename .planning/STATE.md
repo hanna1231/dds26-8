@@ -1,65 +1,43 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: 2PC & Message Queues
+milestone: v3.0
+milestone_name: Abstract Orchestrator & Refactoring
 status: in-progress
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-03-12T11:47:22Z"
-last_activity: 2026-03-12 -- Completed 13-01 integration wiring (queue consumers, docker-compose, Makefile)
+stopped_at: null
+last_updated: "2026-03-26T00:00:00Z"
+last_activity: 2026-03-26 -- Milestone v3.0 started
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 11
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-12)
+See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 13 - Integration & Benchmark Validation
+**Current focus:** Defining requirements for v3.0
 
 ## Current Position
 
-Phase: 13 of 13 (Integration & Benchmark Validation)
-Plan: 1 of 2 in current phase (13-01 complete)
-Status: in-progress
-Last activity: 2026-03-12 -- Completed 13-01 integration wiring (queue consumers, docker-compose, Makefile)
-
-Progress: [██████████] 97%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-26 — Milestone v3.0 started
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0 (v2.0)
+- Total plans completed: 0 (v3.0)
 - Average duration: --
 - Total execution time: --
 
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-- Last 5 plans: --
-- Trend: --
-
 *Updated after each plan completion*
-| Phase 08 P01 | 4min | 2 tasks | 3 files |
-| Phase 08 P02 | 4min | 2 tasks | 4 files |
-| Phase 09 P01 | 2min | 2 tasks | 2 files |
-| Phase 09 P02 | 2min | 2 tasks | 3 files |
-| Phase 10 P01 | 2min | 2 tasks | 5 files |
-| Phase 11 P01 | 2min | 2 tasks | 3 files |
-| Phase 11 P02 | 4min | 3 tasks | 3 files |
-| Phase 12 P01 | 3min | 2 tasks | 17 files |
-| Phase 12 P02 | 5min | 2 tasks | 4 files |
-| Phase 13 P01 | 2min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -68,28 +46,9 @@ Progress: [██████████] 97%
 See PROJECT.md Key Decisions table for full history.
 
 Recent decisions affecting current work:
-- [Roadmap]: Phases 9-10 (queue) and Phase 11 (2PC) can proceed in parallel after Phase 8
-- [Roadmap]: Business logic extraction is prerequisite for both queue consumers and 2PC participants
-- [08-02]: Return plain dicts from operations functions for transport independence
-- [08-02]: Clear operations module from sys.modules in conftest to avoid cross-service cache collision
-- [08-01]: Return plain dicts from stock operations functions for transport independence
-- [08-01]: Preserve all CAS loops and Lua scripts exactly during extraction
-- [Phase 09]: STREAM_MAXLEN 1000 for command/reply streams (smaller than saga events)
-- [Phase 09]: Single shared reply stream with consumer group for all service replies
-- [09-02]: Separate db and queue_db parameters on consumers for future multi-Redis deployment
-- [09-02]: Defensive int() casting on quantity/amount in COMMAND_DISPATCH lambdas
-- [10-01]: Transport adapter re-exports domain functions only; init/close handled directly in app.py
-- [10-01]: COMM_MODE read at import time; tests use sys.modules cache clearing
-- [11-01]: Reuse Redis db=3 for TPC and SAGA records (different key prefixes {tpc:} vs {saga:})
-- [11-01]: Mirror saga.py pattern exactly for TPC state machine (same Lua CAS, same API shape)
-- [11-02]: Hold key stores quantity/amount as string; idempotency via hold key EXISTS check
-- [11-02]: COMMIT always idempotent (DEL on missing key is no-op); ABORT returns success when hold key gone
-- [12-01]: 2PC transport wrappers use order_id (not idempotency_key) matching operations.py signatures
-- [12-02]: WAL pattern persists COMMITTING/ABORTING before sending phase-2 messages
-- [12-02]: Presumed abort for INIT and PREPARING states in recovery
-- [12-02]: Patch transport module (not recovery) for lazy-import mock targets
-- [13-01]: Pass db for both db and queue_db params since simple mode shares single Redis cluster
-- [13-01]: Add COMM_MODE to stock, payment, and orchestrator; TRANSACTION_PATTERN only to orchestrator
+- [v2.0]: Transport adapter pattern (gRPC/queue swap via COMM_MODE) — reusable for workflow engine
+- [v2.0]: Business logic extracted into operations modules — clean separation for workflow steps
+- [v2.0]: SAGA and 2PC state machines share Lua CAS pattern — unify under workflow engine
 
 ### Pending Todos
 
@@ -97,10 +56,10 @@ None.
 
 ### Blockers/Concerns
 
-None.
+- **Deadline:** April 1st (6 days) — scope must be tight
 
 ## Session Continuity
 
-Last session: 2026-03-12T11:47:22Z
-Stopped at: Completed 13-01-PLAN.md
+Last session: 2026-03-26T00:00:00Z
+Stopped at: null
 Resume file: None
