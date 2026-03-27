@@ -85,11 +85,13 @@ Plans:
 **Requirements**: ENG-03, CHK-01
 **Success Criteria** (what must be TRUE):
   1. `WorkflowEngine.execute(workflow_id, definition, context)` routes to the correct strategy based on the definition's strategy field and publishes lifecycle events
-  2. `make_checkout_workflow()` in `workflows/checkout.py` returns a `WorkflowDefinition` whose steps are closures over `transport.py` functions -- no Stock/Payment service names appear in the engine or strategy modules
+  2. `make_checkout_workflow()` in `checkout_workflow.py` returns a `WorkflowDefinition` whose steps are closures over `transport.py` functions -- no Stock/Payment service names appear in the engine or strategy modules
   3. A full happy-path checkout driven through `engine.execute()` completes successfully with correct Redis state transitions
   4. A stock failure mid-checkout triggers the registered compensation path and leaves no partial reservations
-**Plans**: TBD
-**UI hint**: no
+**Plans:** 2 plans
+Plans:
+- [ ] 16-01-PLAN.md -- TDD: WorkflowEngine with strategy routing + lifecycle events (ENG-03)
+- [ ] 16-02-PLAN.md -- TDD: Checkout workflow definition factory with transport closures (CHK-01)
 
 ### Phase 17: Wiring
 **Goal**: The running system uses the workflow engine for all checkout coordination -- grpc_server.py, recovery.py, and consumers.py are updated to call engine APIs and all 37 integration tests pass
@@ -136,6 +138,6 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 13. Integration & Benchmark | v2.0 | 1/2 | Complete | 2026-03-26 |
 | 14. Engine Core | v3.0 | 1/1 | Complete    | 2026-03-27 |
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
-| 16. WorkflowEngine + Checkout Definition | v3.0 | 0/TBD | Not started | - |
+| 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Not started | - |
 | 17. Wiring | v3.0 | 0/TBD | Not started | - |
 | 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |
