@@ -61,7 +61,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   3. `WorkflowStore.create()` initializes a workflow Redis hash using HSETNX -- concurrent calls for the same workflow_id are safe (exactly-once guarantee preserved)
   4. `WorkflowStore.transition()` uses the extracted Lua CAS script -- invalid state transitions are rejected atomically
   5. `WorkflowStore.mark_step_done()` writes `step_N_done` flags replacing hardcoded `stock_reserved`/`payment_charged` field names
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 14-01-PLAN.md -- TDD: WorkflowStep/WorkflowDefinition types + WorkflowStore with Lua CAS
 
 ### Phase 15: Execution Strategies
 **Goal**: SAGA and 2PC execution logic lives in isolated, testable strategy classes that drive any WorkflowDefinition without knowledge of specific services
@@ -129,7 +131,7 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 11. 2PC State Machine & Participants | v2.0 | 2/2 | Complete | 2026-03-12 |
 | 12. 2PC Coordinator & Recovery | v2.0 | 2/2 | Complete | 2026-03-12 |
 | 13. Integration & Benchmark | v2.0 | 1/2 | Complete | 2026-03-26 |
-| 14. Engine Core | v3.0 | 0/TBD | Not started | - |
+| 14. Engine Core | v3.0 | 0/1 | Not started | - |
 | 15. Execution Strategies | v3.0 | 0/TBD | Not started | - |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/TBD | Not started | - |
 | 17. Wiring | v3.0 | 0/TBD | Not started | - |
