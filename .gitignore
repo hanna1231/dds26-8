@@ -1,3 +1,5 @@
 .idea
 .DS_Store
 wdm-project-benchmark/
+__pycache__/
+.claude/
