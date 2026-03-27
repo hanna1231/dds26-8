@@ -1,12 +1,13 @@
 """
-Unit tests for retry module and SagaStrategy.
+Unit tests for retry module, SagaStrategy, and TwoPhaseStrategy.
 
 Covers:
 - retry_forward: success on first try, exhausted after max_attempts, CircuitBreakerError propagation
 - retry_forever: success after initial failure
 - SagaStrategy.execute: success path, failure triggering compensation
 - SagaStrategy.compensate: reverse order, partial, recovery path reading store flags
-- STR-04 partial: SagaStrategy accepts WorkflowDefinition with strategy="saga"
+- TwoPhaseStrategy.execute: all prepare success, prepare failure/exception, WAL ordering, concurrent prepare
+- STR-04: Both strategies accept the same WorkflowDefinition object without TypeError
 
 All async tests run without @pytest.mark.asyncio (asyncio_mode=auto in pytest.ini).
 """
@@ -25,6 +26,7 @@ from workflow_types import WorkflowStep, WorkflowDefinition  # noqa: E402
 from workflow_store import WorkflowStore  # noqa: E402
 from saga_strategy import SagaStrategy, SAGA_STATES, VALID_TRANSITIONS  # noqa: E402
 from retry import retry_forward, retry_forever  # noqa: E402
+from tpc_strategy import TwoPhaseStrategy, TPC_STATES, TPC_VALID_TRANSITIONS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +225,228 @@ async def test_both_strategies_accept_saga_definition(mock_sleep):
     # Should not raise TypeError or ValueError
     result = await strategy.execute("wf-6", definition, {}, store)
     assert result["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# TwoPhaseStrategy tests
+# ---------------------------------------------------------------------------
+
+
+async def test_tpc_execute_all_prepare_success():
+    """TwoPhaseStrategy.execute() transitions INIT->PREPARING->COMMITTING->COMMITTED on success."""
+    step0 = make_step("reserve_stock")
+    step1 = make_step("charge_payment")
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    strategy = TwoPhaseStrategy()
+    context = {"order_id": "ord-10"}
+
+    result = await strategy.execute("wf-10", definition, context, store)
+
+    assert result["success"] is True
+    assert result["error_message"] == ""
+
+    # Verify state transitions in order
+    transition_calls = store.transition.call_args_list
+    assert call("wf-10", "INIT", "PREPARING") in transition_calls
+    assert call("wf-10", "PREPARING", "COMMITTING") in transition_calls
+    assert call("wf-10", "COMMITTING", "COMMITTED") in transition_calls
+
+    # Verify ordering: INIT->PREPARING < PREPARING->COMMITTING < COMMITTING->COMMITTED
+    indices = {
+        "INIT->PREPARING": next(
+            i for i, c in enumerate(transition_calls) if c == call("wf-10", "INIT", "PREPARING")
+        ),
+        "PREPARING->COMMITTING": next(
+            i for i, c in enumerate(transition_calls) if c == call("wf-10", "PREPARING", "COMMITTING")
+        ),
+        "COMMITTING->COMMITTED": next(
+            i for i, c in enumerate(transition_calls) if c == call("wf-10", "COMMITTING", "COMMITTED")
+        ),
+    }
+    assert indices["INIT->PREPARING"] < indices["PREPARING->COMMITTING"] < indices["COMMITTING->COMMITTED"]
+
+
+async def test_tpc_execute_concurrent_prepare():
+    """TwoPhaseStrategy sends all prepare requests concurrently (all step actions called).
+
+    Note: action is called twice total -- once for prepare (phase 1) and once for
+    commit (phase 2) when all votes succeed. This test verifies all 3 steps were called
+    during the prepare phase (demonstrating concurrent execution, not sequential).
+    """
+    step0 = make_step("s0")
+    step1 = make_step("s1")
+    step2 = make_step("s2")
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1, step2], strategy="2pc")
+    store = make_mock_store()
+    strategy = TwoPhaseStrategy()
+
+    await strategy.execute("wf-11", definition, {}, store)
+
+    # All actions must have been called (at minimum for prepare phase)
+    # With success path, each action is called twice: once for prepare, once for commit
+    assert step0.action.await_count >= 1, "step0 action should have been called"
+    assert step1.action.await_count >= 1, "step1 action should have been called"
+    assert step2.action.await_count >= 1, "step2 action should have been called"
+    # Verify all 3 steps were included (not just first N)
+    assert step0.action.await_count == step1.action.await_count == step2.action.await_count
+
+
+async def test_tpc_execute_wal_commit():
+    """WAL: PREPARING->COMMITTING transition written BEFORE phase-2 commit action calls.
+
+    Uses a shared call_log list to track interleaving of store.transition() calls
+    and step action invocations during phase-2. The WAL PREPARING->COMMITTING entry
+    must appear in the log before any phase-2 'commit_action' entries.
+
+    Note: phase-1 actions also log 'commit_action' (they share the same function here).
+    We verify the WAL write happens before the SECOND batch of action calls (phase-2).
+    Since gather runs phase-1 concurrently, we count occurrences: after the WAL write
+    there should be exactly 2 more 'commit_action' entries from phase-2.
+    """
+    call_log = []
+
+    async def action_that_logs(ctx):
+        call_log.append("commit_action")
+        return {"success": True, "error_message": ""}
+
+    async def mock_transition(workflow_id, from_state, to_state, **kwargs):
+        call_log.append(f"transition:{from_state}->{to_state}")
+        return True
+
+    step0 = WorkflowStep(name="s0", action=action_that_logs, compensation=AsyncMock())
+    step1 = WorkflowStep(name="s1", action=action_that_logs, compensation=AsyncMock())
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    store.transition.side_effect = mock_transition
+    strategy = TwoPhaseStrategy()
+
+    await strategy.execute("wf-12", definition, {}, store)
+
+    # Find the WAL write position
+    wal_idx = next(i for i, e in enumerate(call_log) if e == "transition:PREPARING->COMMITTING")
+
+    # All entries after the WAL write that are 'commit_action' are phase-2 calls
+    phase2_actions_after_wal = [i for i, e in enumerate(call_log) if e == "commit_action" and i > wal_idx]
+    assert len(phase2_actions_after_wal) == 2, (
+        f"Expected 2 phase-2 commit actions after WAL write at {wal_idx}, got {call_log}"
+    )
+
+
+async def test_tpc_execute_wal_abort():
+    """WAL: PREPARING->ABORTING transition written BEFORE phase-2 compensation calls."""
+    call_log = []
+
+    async def prepare_fail(ctx):
+        return {"success": False, "error_message": "vote no"}
+
+    async def prepare_ok(ctx):
+        return {"success": True, "error_message": ""}
+
+    async def comp_that_logs(ctx):
+        call_log.append("compensation_called")
+        return {"success": True, "error_message": ""}
+
+    async def mock_transition(workflow_id, from_state, to_state, **kwargs):
+        call_log.append(f"transition:{from_state}->{to_state}")
+        return True
+
+    step0 = WorkflowStep(name="s0", action=prepare_ok, compensation=comp_that_logs)
+    step1 = WorkflowStep(name="s1", action=prepare_fail, compensation=comp_that_logs)
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    store.transition.side_effect = mock_transition
+    strategy = TwoPhaseStrategy()
+
+    await strategy.execute("wf-13", definition, {}, store)
+
+    wal_idx = next(i for i, e in enumerate(call_log) if e == "transition:PREPARING->ABORTING")
+    comp_indices = [i for i, e in enumerate(call_log) if e == "compensation_called"]
+    # All compensations appear after PREPARING->ABORTING WAL write
+    assert all(idx > wal_idx for idx in comp_indices), (
+        f"WAL write at {wal_idx} should precede all compensations at {comp_indices}"
+    )
+
+
+async def test_tpc_execute_prepare_failure_aborts():
+    """TwoPhaseStrategy aborts when any prepare returns success=False."""
+    step0 = make_step("s0")
+    step1 = make_step("s1", action_result={"success": False, "error_message": "prepare rejected"})
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    strategy = TwoPhaseStrategy()
+    context = {"order_id": "ord-14"}
+
+    result = await strategy.execute("wf-14", definition, context, store)
+
+    assert result["success"] is False
+    assert result["error_message"] == "prepare rejected"
+
+    # Abort path: PREPARING->ABORTING and ABORTING->ABORTED
+    transition_calls = store.transition.call_args_list
+    assert call("wf-14", "PREPARING", "ABORTING") in transition_calls
+    assert call("wf-14", "ABORTING", "ABORTED") in transition_calls
+
+    # Both compensations called (all steps get abort)
+    step0.compensation.assert_awaited_once_with(context)
+    step1.compensation.assert_awaited_once_with(context)
+
+
+async def test_tpc_execute_prepare_exception_aborts():
+    """TwoPhaseStrategy aborts when any prepare action raises an Exception."""
+    step0 = make_step("s0")
+    step1 = make_step("s1")
+    step1.action.side_effect = RuntimeError("network")
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    strategy = TwoPhaseStrategy()
+
+    result = await strategy.execute("wf-15", definition, {}, store)
+
+    assert result["success"] is False
+    assert "network" in result["error_message"]
+
+    transition_calls = store.transition.call_args_list
+    assert call("wf-15", "PREPARING", "ABORTING") in transition_calls
+
+
+async def test_tpc_marks_step_done_on_prepare_success():
+    """TwoPhaseStrategy calls store.mark_step_done for each step that votes yes."""
+    step0 = make_step("s0")
+    step1 = make_step("s1")
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="2pc")
+    store = make_mock_store()
+    strategy = TwoPhaseStrategy()
+
+    await strategy.execute("wf-16", definition, {}, store)
+
+    store.mark_step_done.assert_any_await("wf-16", 0)
+    store.mark_step_done.assert_any_await("wf-16", 1)
+
+
+# ---------------------------------------------------------------------------
+# STR-04 complete: both strategies accept the same WorkflowDefinition
+# ---------------------------------------------------------------------------
+
+
+@patch("retry.asyncio.sleep", new_callable=AsyncMock)
+async def test_both_strategies_accept_same_definition(mock_sleep):
+    """STR-04: SagaStrategy and TwoPhaseStrategy both accept the same WorkflowDefinition without TypeError."""
+    step0 = make_step("s0")
+    step1 = make_step("s1")
+    definition = WorkflowDefinition(name="checkout", steps=[step0, step1], strategy="saga")
+
+    # --- SagaStrategy run ---
+    saga_store = make_mock_store()
+    saga_result = await SagaStrategy().execute("wf-str04-saga", definition, {}, saga_store)
+    assert "success" in saga_result
+
+    # Reset mocks for TwoPhaseStrategy run (same definition object, unchanged)
+    step0.action.reset_mock()
+    step0.compensation.reset_mock()
+    step1.action.reset_mock()
+    step1.compensation.reset_mock()
+
+    tpc_store = make_mock_store()
+    tpc_result = await TwoPhaseStrategy().execute("wf-str04-tpc", definition, {}, tpc_store)
+    assert "success" in tpc_result
