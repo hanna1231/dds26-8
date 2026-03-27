@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Abstract Orchestrator & Refactoring
-status: Ready to plan
-stopped_at: Phase 15 context gathered
-last_updated: "2026-03-27T09:37:45.164Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-03-27T10:54:22.851Z"
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 3
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 14 — engine-core
+**Current focus:** Phase 15 — execution-strategies
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
+Phase: 15 (execution-strategies) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -50,6 +50,11 @@ Recent decisions affecting current work:
 - [v3.0-research]: Key prefix decision deferred -- safer to reuse existing {saga:*}/{tpc:*} prefixes so recovery scanner works unchanged; lock this before Phase 14 coding begins
 - [Phase 14-engine-core]: WorkflowStore as class (not module functions) to pre-align with REF-03 injectable dependency in Phase 16
 - [Phase 14-engine-core]: TRANSITION_LUA extracted verbatim from saga.py:42-49 -- identical to tpc.py:43-50
+- [Phase 15]: retry_forward and retry_forever extracted verbatim from grpc_server.py per D-04 to avoid duplication
+- [Phase 15]: SagaStrategy is stateless (no constructor params) for testability and thread safety
+- [Phase 15]: STATE_SEQUENCE hardcoded as module-level list for SAGA state progression (domain-specific)
+- [Phase 15]: TwoPhaseStrategy does NOT import retry.py -- 2PC prepare is fire-once concurrent, not bounded-retry
+- [Phase 15]: Phase-2 commit uses step.action again (same callable as prepare) aligning with grpc_server.py pattern
 
 ### Pending Todos
 
@@ -63,6 +68,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T09:37:45.161Z
-Stopped at: Phase 15 context gathered
-Resume file: .planning/phases/15-execution-strategies/15-CONTEXT.md
+Last session: 2026-03-27T10:54:22.848Z
+Stopped at: Completed 15-02-PLAN.md
+Resume file: None

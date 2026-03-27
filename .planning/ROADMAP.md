@@ -44,7 +44,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - Decimal phases (14.1, 14.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 14: Engine Core** - Define WorkflowStep/WorkflowDefinition data model and build generic Redis-persisted WorkflowStore with Lua CAS transitions (completed 2026-03-27)
-- [ ] **Phase 15: Execution Strategies** - Implement SagaStrategy (sequential + reverse compensation) and TwoPhaseStrategy (concurrent prepare + WAL commit/abort)
+- [x] **Phase 15: Execution Strategies** - Implement SagaStrategy (sequential + reverse compensation) and TwoPhaseStrategy (concurrent prepare + WAL commit/abort) (completed 2026-03-27)
 - [ ] **Phase 16: WorkflowEngine + Checkout Definition** - Wire store and strategies into WorkflowEngine.execute() and rewrite checkout as a WorkflowDefinition factory
 - [ ] **Phase 17: Wiring** - Replace hardcoded orchestration in grpc_server.py with engine.execute() and generalize recovery scanner to use engine API
 - [ ] **Phase 18: Cleanup & Refactoring** - Delete saga.py/tpc.py after validation, add named step logging, make engine injectable, and clean up the codebase
@@ -74,10 +74,10 @@ Plans:
   2. `SagaStrategy.compensate()` runs compensations in reverse step order with infinite retry -- each step's registered compensation callable is invoked, never a hardcoded flag check
   3. `TwoPhaseStrategy.execute()` sends prepare concurrently to all steps, writes WAL decision (COMMITTING state) before sending phase-2 messages, and calls abort if any prepare fails
   4. Both strategies accept and execute the same `WorkflowDefinition` object -- strategy selection is driven by the definition's `strategy` field, not by caller logic
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
-- [ ] 15-01-PLAN.md -- Extract retry utilities + SagaStrategy with tests (STR-01, STR-02, STR-04)
-- [ ] 15-02-PLAN.md -- TwoPhaseStrategy with tests + STR-04 cross-strategy proof (STR-03, STR-04)
+- [x] 15-01-PLAN.md -- Extract retry utilities + SagaStrategy with tests (STR-01, STR-02, STR-04)
+- [x] 15-02-PLAN.md -- TwoPhaseStrategy with tests + STR-04 cross-strategy proof (STR-03, STR-04)
 
 ### Phase 16: WorkflowEngine + Checkout Definition
 **Goal**: WorkflowEngine.execute() is the single entry point for all transaction coordination and checkout is expressed as a WorkflowDefinition factory -- the engine knows nothing about Stock or Payment
@@ -135,7 +135,7 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 12. 2PC Coordinator & Recovery | v2.0 | 2/2 | Complete | 2026-03-12 |
 | 13. Integration & Benchmark | v2.0 | 1/2 | Complete | 2026-03-26 |
 | 14. Engine Core | v3.0 | 1/1 | Complete    | 2026-03-27 |
-| 15. Execution Strategies | v3.0 | 0/2 | Not started | - |
+| 15. Execution Strategies | v3.0 | 2/2 | Complete   | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/TBD | Not started | - |
 | 17. Wiring | v3.0 | 0/TBD | Not started | - |
 | 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |

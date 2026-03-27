@@ -9,18 +9,18 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Workflow Engine Core
 
-- [ ] **ENG-01**: WorkflowStep dataclass with name, async action callable, and async compensation callable
-- [ ] **ENG-02**: WorkflowDefinition dataclass with name, ordered steps list, and strategy field (saga/2pc)
+- [x] **ENG-01**: WorkflowStep dataclass with name, async action callable, and async compensation callable
+- [x] **ENG-02**: WorkflowDefinition dataclass with name, ordered steps list, and strategy field (saga/2pc)
 - [ ] **ENG-03**: WorkflowEngine class with execute(workflow_id, definition, context) entry point that routes to strategy
-- [ ] **ENG-04**: Durable workflow state persisted in Redis using existing Lua CAS transition pattern
-- [ ] **ENG-05**: Per-step completion flags (step_N_done) replacing hardcoded field names (stock_reserved, payment_charged)
+- [x] **ENG-04**: Durable workflow state persisted in Redis using existing Lua CAS transition pattern
+- [x] **ENG-05**: Per-step completion flags (step_N_done) replacing hardcoded field names (stock_reserved, payment_charged)
 
 ### Execution Strategies
 
-- [ ] **STR-01**: SAGA strategy executor with forward step execution and bounded retry
-- [ ] **STR-02**: SAGA compensation with reverse-order step undoing and infinite retry
-- [ ] **STR-03**: 2PC strategy executor with concurrent prepare, WAL decision write, and phase-2 commit/abort
-- [ ] **STR-04**: Both strategies callable from the same WorkflowDefinition (strategy field selects execution path)
+- [x] **STR-01**: SAGA strategy executor with forward step execution and bounded retry
+- [x] **STR-02**: SAGA compensation with reverse-order step undoing and infinite retry
+- [x] **STR-03**: 2PC strategy executor with concurrent prepare, WAL decision write, and phase-2 commit/abort
+- [x] **STR-04**: Both strategies callable from the same WorkflowDefinition (strategy field selects execution path)
 
 ### Checkout Abstraction
 
@@ -66,14 +66,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ENG-01 | Phase 14 | Pending |
-| ENG-02 | Phase 14 | Pending |
-| ENG-04 | Phase 14 | Pending |
-| ENG-05 | Phase 14 | Pending |
-| STR-01 | Phase 15 | Pending |
-| STR-02 | Phase 15 | Pending |
-| STR-03 | Phase 15 | Pending |
-| STR-04 | Phase 15 | Pending |
+| ENG-01 | Phase 14 | Complete |
+| ENG-02 | Phase 14 | Complete |
+| ENG-04 | Phase 14 | Complete |
+| ENG-05 | Phase 14 | Complete |
+| STR-01 | Phase 15 | Complete |
+| STR-02 | Phase 15 | Complete |
+| STR-03 | Phase 15 | Complete |
+| STR-04 | Phase 15 | Complete |
 | ENG-03 | Phase 16 | Pending |
 | CHK-01 | Phase 16 | Pending |
 | CHK-02 | Phase 17 | Pending |
