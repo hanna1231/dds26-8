@@ -84,8 +84,8 @@ async def test_engine_routes_to_saga():
     mock_tpc = AsyncMock()
     mock_tpc.execute = AsyncMock(return_value=expected_result)
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": mock_tpc}), \
-         patch("workflow_engine.publish_event", new_callable=AsyncMock):
+    engine._strategies = {"saga": mock_saga, "2pc": mock_tpc}
+    with patch("workflow_engine.publish_event", new_callable=AsyncMock):
         result = await engine.execute("wf-1", definition, context)
 
     mock_saga.execute.assert_awaited_once_with("wf-1", definition, context, store)
@@ -109,8 +109,8 @@ async def test_engine_routes_to_2pc():
     mock_tpc = AsyncMock()
     mock_tpc.execute = AsyncMock(return_value=expected_result)
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": mock_tpc}), \
-         patch("workflow_engine.publish_event", new_callable=AsyncMock):
+    engine._strategies = {"saga": mock_saga, "2pc": mock_tpc}
+    with patch("workflow_engine.publish_event", new_callable=AsyncMock):
         result = await engine.execute("wf-2", definition, context)
 
     mock_tpc.execute.assert_awaited_once_with("wf-2", definition, context, store)
@@ -140,8 +140,8 @@ async def test_engine_publishes_started_event():
         call_order.append(event_type)
     mock_publish = AsyncMock(side_effect=record_event_call)
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": AsyncMock()}), \
-         patch("workflow_engine.publish_event", mock_publish):
+    engine._strategies = {"saga": mock_saga, "2pc": AsyncMock()}
+    with patch("workflow_engine.publish_event", mock_publish):
         await engine.execute("wf-1", definition, context)
 
     # "workflow_started" must appear before "strategy"
@@ -176,8 +176,8 @@ async def test_engine_publishes_succeeded_event():
     mock_saga.execute = AsyncMock(return_value={"success": True, "error_message": ""})
     mock_publish = AsyncMock()
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": AsyncMock()}), \
-         patch("workflow_engine.publish_event", mock_publish):
+    engine._strategies = {"saga": mock_saga, "2pc": AsyncMock()}
+    with patch("workflow_engine.publish_event", mock_publish):
         await engine.execute("wf-1", definition, context)
 
     event_types = [c.args[1] for c in mock_publish.call_args_list]
@@ -199,8 +199,8 @@ async def test_engine_publishes_failed_event():
     mock_saga.execute = AsyncMock(return_value={"success": False, "error_message": "failed"})
     mock_publish = AsyncMock()
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": AsyncMock()}), \
-         patch("workflow_engine.publish_event", mock_publish):
+    engine._strategies = {"saga": mock_saga, "2pc": AsyncMock()}
+    with patch("workflow_engine.publish_event", mock_publish):
         await engine.execute("wf-1", definition, context)
 
     event_types = [c.args[1] for c in mock_publish.call_args_list]
@@ -235,8 +235,8 @@ async def test_engine_calls_store_create_saga():
     mock_saga = AsyncMock()
     mock_saga.execute = AsyncMock(return_value={"success": True, "error_message": ""})
 
-    with patch("workflow_engine._STRATEGIES", {"saga": mock_saga, "2pc": AsyncMock()}), \
-         patch("workflow_engine.publish_event", new_callable=AsyncMock):
+    engine._strategies = {"saga": mock_saga, "2pc": AsyncMock()}
+    with patch("workflow_engine.publish_event", new_callable=AsyncMock):
         await engine.execute("wf-1", definition, context)
 
     store.create.assert_awaited_once_with(
@@ -257,8 +257,8 @@ async def test_engine_calls_store_create_2pc():
     mock_tpc = AsyncMock()
     mock_tpc.execute = AsyncMock(return_value={"success": True, "error_message": ""})
 
-    with patch("workflow_engine._STRATEGIES", {"saga": AsyncMock(), "2pc": mock_tpc}), \
-         patch("workflow_engine.publish_event", new_callable=AsyncMock):
+    engine._strategies = {"saga": AsyncMock(), "2pc": mock_tpc}
+    with patch("workflow_engine.publish_event", new_callable=AsyncMock):
         await engine.execute("wf-2", definition, context)
 
     store.create.assert_awaited_once_with(
