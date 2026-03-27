@@ -156,3 +156,68 @@ class SagaStrategy:
         await store.transition(workflow_id, "COMPENSATING", "FAILED")
 
         return {"success": False, "error_message": "compensated"}
+
+    async def resume(
+        self,
+        workflow_id: str,
+        definition: WorkflowDefinition,
+        context: dict,
+        store: WorkflowStore,
+        state: str,
+    ) -> dict:
+        """Resume a partially-completed SAGA from its current state.
+
+        Forward states (STARTED, STOCK_RESERVED, PAYMENT_CHARGED): re-run from
+        current position in STATE_SEQUENCE using retry_forward. On failure,
+        transition to COMPENSATING and compensate.
+
+        COMPENSATING: run compensate() with completed_indices=None (reads
+        step_N_done flags from store).
+
+        Mirrors recovery.py:resume_saga() but expressed through strategy class.
+        """
+        if state == "COMPENSATING":
+            return await self.compensate(
+                workflow_id, definition, context, store, completed_indices=None
+            )
+
+        # Forward recovery: find current position in STATE_SEQUENCE
+        if state not in STATE_SEQUENCE:
+            return {"success": False, "error_message": f"unrecoverable state: {state}"}
+
+        start_index = STATE_SEQUENCE.index(state)
+
+        # Execute steps from current position
+        completed_step_indices: list[int] = []
+
+        # Read already-completed steps from store
+        current = await store.get(workflow_id)
+        for i in range(len(definition.steps)):
+            if current and current.get(f"step_{i}_done") == "1":
+                completed_step_indices.append(i)
+
+        for i in range(start_index, len(definition.steps)):
+            if i in completed_step_indices:
+                continue  # Already completed, skip
+
+            step = definition.steps[i]
+            result = await retry_forward(lambda s=step, c=context: s.action(c))
+
+            if not result.get("success"):
+                current_state = STATE_SEQUENCE[i]
+                self._validate_transition(current_state, "COMPENSATING")
+                await store.transition(workflow_id, current_state, "COMPENSATING")
+                return await self.compensate(
+                    workflow_id, definition, context, store,
+                    completed_indices=completed_step_indices + [j for j in range(start_index, i) if j not in completed_step_indices],
+                )
+
+            await store.mark_step_done(workflow_id, i)
+            completed_step_indices.append(i)
+
+            from_state = STATE_SEQUENCE[i]
+            to_state = STATE_SEQUENCE[i + 1]
+            self._validate_transition(from_state, to_state)
+            await store.transition(workflow_id, from_state, to_state)
+
+        return {"success": True, "error_message": ""}

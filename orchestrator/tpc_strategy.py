@@ -135,3 +135,50 @@ class TwoPhaseStrategy:
             self._validate_transition("ABORTING", "ABORTED")
             await store.transition(workflow_id, "ABORTING", "ABORTED")
             return {"success": False, "error_message": first_error}
+
+    async def resume(
+        self,
+        workflow_id: str,
+        definition: WorkflowDefinition,
+        context: dict,
+        store: WorkflowStore,
+        state: str,
+    ) -> dict:
+        """Resume a partially-completed 2PC from its current state.
+
+        COMMITTING: re-send commits (phase 2a), finalize to COMMITTED.
+        INIT/PREPARING: presumed abort -- transition to ABORTING, send aborts.
+        ABORTING: re-send aborts (phase 2b), finalize to ABORTED.
+
+        Mirrors recovery.py:resume_tpc() but expressed through strategy class.
+        """
+        if state == "COMMITTING":
+            # Re-send commits (phase 2a)
+            commit_futures = [step.action(context) for step in definition.steps]
+            await asyncio.gather(*commit_futures, return_exceptions=True)
+
+            self._validate_transition("COMMITTING", "COMMITTED")
+            await store.transition(workflow_id, "COMMITTING", "COMMITTED")
+            logger.info("2PC %s: re-sent commits -> COMMITTED", workflow_id)
+            return {"success": True, "error_message": ""}
+
+        if state in ("INIT", "PREPARING"):
+            # Presumed abort
+            if state == "INIT":
+                self._validate_transition("INIT", "PREPARING")
+                await store.transition(workflow_id, "INIT", "PREPARING")
+            self._validate_transition("PREPARING", "ABORTING")
+            await store.transition(workflow_id, "PREPARING", "ABORTING")
+            state = "ABORTING"  # fall through
+
+        if state == "ABORTING":
+            # Re-send aborts (phase 2b)
+            abort_futures = [step.compensation(context) for step in definition.steps]
+            await asyncio.gather(*abort_futures, return_exceptions=True)
+
+            self._validate_transition("ABORTING", "ABORTED")
+            await store.transition(workflow_id, "ABORTING", "ABORTED")
+            logger.info("2PC %s: re-sent aborts -> ABORTED", workflow_id)
+            return {"success": False, "error_message": "presumed abort"}
+
+        return {"success": False, "error_message": f"unrecoverable 2PC state: {state}"}

@@ -89,3 +89,28 @@ class WorkflowEngine:
                             context.get("order_id", ""), context.get("user_id", ""))
 
         return result
+
+    async def resume(self, workflow_id: str, definition: WorkflowDefinition, context: dict) -> dict:
+        """Resume a partially-completed workflow from its current state.
+
+        Reads workflow state from store, delegates to the appropriate strategy's
+        resume() method. Used by recovery scanner and compensation consumer.
+
+        Args:
+            workflow_id: Unique workflow identifier.
+            definition:  WorkflowDefinition with ordered steps and strategy field.
+            context:     Reconstructed context dict for step callables.
+
+        Returns:
+            {"success": bool, "error_message": str}
+        """
+        strategy = _STRATEGIES.get(definition.strategy)
+        if strategy is None:
+            raise ValueError(f"Unknown strategy: {definition.strategy!r}")
+
+        record = await self._store.get(workflow_id)
+        if record is None:
+            return {"success": False, "error_message": "workflow not found"}
+
+        state = record.get("state", "")
+        return await strategy.resume(workflow_id, definition, context, self._store, state)
