@@ -46,8 +46,8 @@ Checkout transactions must never lose money or item counts — consistency is no
 ### Active
 
 - [x] WorkflowStep/WorkflowDefinition data model and WorkflowStore with Lua CAS — Phase 14
-- [ ] Generic workflow engine as separate orchestrator artifact (Cadence/Temporal-inspired)
-- [ ] Checkout rewritten as workflow definition using abstract engine API
+- [x] Generic workflow engine as separate orchestrator artifact (Cadence/Temporal-inspired) — Phase 16
+- [x] Checkout rewritten as workflow definition using abstract engine API — Phase 16
 - [x] Engine supports both SAGA and 2PC execution strategies — Phase 15
 - [ ] Codebase refactoring for clarity, consistency, and maintainability
 
@@ -124,4 +124,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-27 after Phase 15 (Execution Strategies) completion*
+*Last updated: 2026-03-27 after Phase 16 (WorkflowEngine + Checkout Definition) completion*
