@@ -118,7 +118,7 @@ Plans:
   4. Benchmark passes with 0 consistency violations after all refactoring changes
 **Plans:** 2 plans
 Plans:
-- [ ] 18-01-PLAN.md -- Migrate test files off saga/tpc imports (REF-01, REF-04)
+- [x] 18-01-PLAN.md -- Migrate test files off saga/tpc imports (REF-01, REF-04)
 - [ ] 18-02-PLAN.md -- Delete dead modules + add step logging + injectable engine (REF-01, REF-02, REF-03, REF-04)
 
 ## Progress
@@ -146,4 +146,4 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Complete    | 2026-03-27 |
 | 17. Wiring | v3.0 | 2/2 | Complete    | 2026-03-27 |
-| 18. Cleanup & Refactoring | v3.0 | 0/2 | Not started | - |
+| 18. Cleanup & Refactoring | v3.0 | 1/2 | In Progress | - |
