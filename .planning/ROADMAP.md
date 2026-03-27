@@ -46,7 +46,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 14: Engine Core** - Define WorkflowStep/WorkflowDefinition data model and build generic Redis-persisted WorkflowStore with Lua CAS transitions (completed 2026-03-27)
 - [x] **Phase 15: Execution Strategies** - Implement SagaStrategy (sequential + reverse compensation) and TwoPhaseStrategy (concurrent prepare + WAL commit/abort) (completed 2026-03-27)
 - [x] **Phase 16: WorkflowEngine + Checkout Definition** - Wire store and strategies into WorkflowEngine.execute() and rewrite checkout as a WorkflowDefinition factory (completed 2026-03-27)
-- [ ] **Phase 17: Wiring** - Replace hardcoded orchestration in grpc_server.py with engine.execute() and generalize recovery scanner to use engine API
+- [x] **Phase 17: Wiring** - Replace hardcoded orchestration in grpc_server.py with engine.execute() and generalize recovery scanner to use engine API (completed 2026-03-27)
 - [ ] **Phase 18: Cleanup & Refactoring** - Delete saga.py/tpc.py after validation, add named step logging, make engine injectable, and clean up the codebase
 
 ## Phase Details
@@ -102,10 +102,10 @@ Plans:
   2. Recovery scanner calls `engine.resume()` for incomplete workflows -- it covers both SAGA and 2PC transactions discovered at startup
   3. All 37 existing integration tests pass in both `COMM_MODE=grpc` and `COMM_MODE=queue` modes
   4. Kill-test produces 0 consistency violations (no lost money or items) after the wiring change
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 17-01-PLAN.md -- Wire grpc_server.py to engine.execute() with duplicate detection + fix tests (CHK-02)
-- [ ] 17-02-PLAN.md -- Add engine.resume() + rewrite recovery.py + update consumers.py (CHK-03)
+- [x] 17-02-PLAN.md -- Add engine.resume() + rewrite recovery.py + update consumers.py (CHK-03)
 
 ### Phase 18: Cleanup & Refactoring
 **Goal**: The codebase is clean, the superseded modules are deleted, and all log lines carry workflow context -- the engine is ready for demo and code review
@@ -142,5 +142,5 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 14. Engine Core | v3.0 | 1/1 | Complete    | 2026-03-27 |
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Complete    | 2026-03-27 |
-| 17. Wiring | v3.0 | 1/2 | In Progress|  |
+| 17. Wiring | v3.0 | 2/2 | Complete   | 2026-03-27 |
 | 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |

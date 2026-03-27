@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Abstract Orchestrator & Refactoring
-status: Ready to execute
-stopped_at: Completed 17-01-PLAN.md
-last_updated: "2026-03-27T12:34:26.517Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 17-02-PLAN.md
+last_updated: "2026-03-27T12:41:05.048Z"
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -59,6 +59,8 @@ Recent decisions affecting current work:
 - [Phase 16-workflowengine-checkout-definition]: events.py publish_event: saga_id param renamed to workflow_id; wire format retains saga_id
 - [Phase 17-wiring]: Persist strategy in metadata on store.create() for crash recovery prep (CHK-03)
 - [Phase 17-wiring]: Preserve run_checkout/run_2pc_checkout in grpc_server.py for backward-compatible tests (Phase 18 REF-01 will delete them)
+- [Phase 17]: SagaStrategy.resume() skips already-completed steps by reading step_N_done flags before re-executing forward path
+- [Phase 17]: Old recover_incomplete_sagas/recover_incomplete_tpc functions preserved -- Phase 18 REF-01 will delete them
 
 ### Pending Todos
 
@@ -72,6 +74,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T12:34:26.514Z
-Stopped at: Completed 17-01-PLAN.md
+Last session: 2026-03-27T12:41:00.379Z
+Stopped at: Completed 17-02-PLAN.md
 Resume file: None
