@@ -83,7 +83,10 @@ class SagaStrategy:
         completed_step_indices: list[int] = []
 
         for i, step in enumerate(definition.steps):
-            result = await retry_forward(lambda s=step, c=context: s.action(c))
+            try:
+                result = await retry_forward(lambda s=step, c=context: s.action(c))
+            except Exception as exc:
+                result = {"success": False, "error_message": str(exc)}
 
             if not result.get("success"):
                 # Transition to COMPENSATING

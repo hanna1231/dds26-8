@@ -39,7 +39,7 @@ from consumers import (
 from workflow_store import WorkflowStore
 from workflow_engine import WorkflowEngine
 from checkout_workflow import make_checkout_workflow
-import transport as _transport_mod
+import checkout_workflow as _checkout_mod
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +297,13 @@ async def test_checkout_publishes_lifecycle_events(events_db, monkeypatch):
     await setup_consumer_groups(events_db)
 
     # Mock transport functions to simulate successful stock/payment.
-    # checkout_workflow imports reserve_stock and charge_payment from transport,
-    # so we patch them on the transport module.
+    # checkout_workflow imports reserve_stock/charge_payment at module level,
+    # so we patch them on the checkout_workflow module (not transport).
     mock_reserve = AsyncMock(return_value={"success": True, "error_message": ""})
     mock_charge = AsyncMock(return_value={"success": True, "error_message": ""})
 
-    monkeypatch.setattr(_transport_mod, "reserve_stock", mock_reserve)
-    monkeypatch.setattr(_transport_mod, "charge_payment", mock_charge)
+    monkeypatch.setattr(_checkout_mod, "reserve_stock", mock_reserve)
+    monkeypatch.setattr(_checkout_mod, "charge_payment", mock_charge)
 
     store = WorkflowStore(events_db)
     engine = WorkflowEngine(store=store, db=events_db)
