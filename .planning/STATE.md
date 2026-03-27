@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Abstract Orchestrator & Refactoring
-status: Ready to plan
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-03-27T11:52:10.159Z"
+status: Ready to execute
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-27T12:34:26.517Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 16 — workflowengine-checkout-definition
+**Current focus:** Phase 17 — wiring
 
 ## Current Position
 
-Phase: 17
-Plan: Not started
+Phase: 17 (wiring) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -57,6 +57,8 @@ Recent decisions affecting current work:
 - [Phase 15]: Phase-2 commit uses step.action again (same callable as prepare) aligning with grpc_server.py pattern
 - [Phase 16-workflowengine-checkout-definition]: WorkflowEngine receives WorkflowStore via constructor (injectable per REF-03)
 - [Phase 16-workflowengine-checkout-definition]: events.py publish_event: saga_id param renamed to workflow_id; wire format retains saga_id
+- [Phase 17-wiring]: Persist strategy in metadata on store.create() for crash recovery prep (CHK-03)
+- [Phase 17-wiring]: Preserve run_checkout/run_2pc_checkout in grpc_server.py for backward-compatible tests (Phase 18 REF-01 will delete them)
 
 ### Pending Todos
 
@@ -70,6 +72,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T11:41:35.630Z
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-03-27T12:34:26.514Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None

@@ -25,7 +25,7 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 ### Checkout Abstraction
 
 - [ ] **CHK-01**: checkout_workflow.py defining checkout as WorkflowDefinition using transport.py functions
-- [ ] **CHK-02**: grpc_server.py refactored to receive WorkflowEngine and call engine.execute() only
+- [x] **CHK-02**: grpc_server.py refactored to receive WorkflowEngine and call engine.execute() only
 - [ ] **CHK-03**: Recovery scanner generalized to read workflow state and resume via engine API
 
 ### Refactoring & Cleanup
@@ -76,7 +76,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STR-04 | Phase 15 | Complete |
 | ENG-03 | Phase 16 | Complete |
 | CHK-01 | Phase 16 | Pending |
-| CHK-02 | Phase 17 | Pending |
+| CHK-02 | Phase 17 | Complete |
 | CHK-03 | Phase 17 | Pending |
 | REF-01 | Phase 18 | Pending |
 | REF-02 | Phase 18 | Pending |

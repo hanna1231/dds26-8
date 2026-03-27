@@ -102,9 +102,9 @@ Plans:
   2. Recovery scanner calls `engine.resume()` for incomplete workflows -- it covers both SAGA and 2PC transactions discovered at startup
   3. All 37 existing integration tests pass in both `COMM_MODE=grpc` and `COMM_MODE=queue` modes
   4. Kill-test produces 0 consistency violations (no lost money or items) after the wiring change
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 17-01-PLAN.md -- Wire grpc_server.py to engine.execute() with duplicate detection + fix tests (CHK-02)
+- [x] 17-01-PLAN.md -- Wire grpc_server.py to engine.execute() with duplicate detection + fix tests (CHK-02)
 - [ ] 17-02-PLAN.md -- Add engine.resume() + rewrite recovery.py + update consumers.py (CHK-03)
 
 ### Phase 18: Cleanup & Refactoring
@@ -142,5 +142,5 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 14. Engine Core | v3.0 | 1/1 | Complete    | 2026-03-27 |
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Complete    | 2026-03-27 |
-| 17. Wiring | v3.0 | 0/2 | Not started | - |
+| 17. Wiring | v3.0 | 1/2 | In Progress|  |
 | 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |
