@@ -150,9 +150,14 @@ async def orchestrator_grpc_server(orchestrator_db, grpc_clients):
     Depends on grpc_clients to ensure Stock/Payment gRPC clients are initialized
     before the orchestrator server starts (orchestrator calls them during checkout).
     """
+    from workflow_store import WorkflowStore
+    from workflow_engine import WorkflowEngine
+    store = WorkflowStore(orchestrator_db)
+    engine = WorkflowEngine(store=store, db=orchestrator_db)
+
     server = grpc.aio.server()
     add_OrchestratorServiceServicer_to_server(
-        OrchestratorServiceServicer(orchestrator_db), server
+        OrchestratorServiceServicer(orchestrator_db, engine), server
     )
     server.add_insecure_port("[::]:50053")
     await server.start()

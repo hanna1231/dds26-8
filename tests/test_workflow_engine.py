@@ -239,7 +239,9 @@ async def test_engine_calls_store_create_saga():
          patch("workflow_engine.publish_event", new_callable=AsyncMock):
         await engine.execute("wf-1", definition, context)
 
-    store.create.assert_awaited_once_with("wf-1", "STARTED", metadata=context)
+    store.create.assert_awaited_once_with(
+        "wf-1", "STARTED", metadata={**context, "strategy": "saga"}
+    )
 
 
 async def test_engine_calls_store_create_2pc():
@@ -259,4 +261,6 @@ async def test_engine_calls_store_create_2pc():
          patch("workflow_engine.publish_event", new_callable=AsyncMock):
         await engine.execute("wf-2", definition, context)
 
-    store.create.assert_awaited_once_with("wf-2", "INIT", metadata=context)
+    store.create.assert_awaited_once_with(
+        "wf-2", "INIT", metadata={**context, "strategy": "2pc"}
+    )

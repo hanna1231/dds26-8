@@ -402,17 +402,20 @@ async def test_recovery_skips_saga(tpc_db, clean_tpc_db):
 # ---------------------------------------------------------------------------
 
 async def test_pattern_toggle_saga(tpc_db, clean_tpc_db):
-    """TRANSACTION_PATTERN=saga -> StartCheckout calls run_checkout."""
+    """TRANSACTION_PATTERN=saga -> StartCheckout uses saga strategy via engine."""
     from grpc_server import OrchestratorServiceServicer
+    from workflow_store import WorkflowStore
+    from workflow_engine import WorkflowEngine
 
-    with patch("grpc_server.TRANSACTION_PATTERN", "saga"), \
-         patch("grpc_server.run_checkout", new_callable=AsyncMock,
-               return_value={"success": True, "error_message": ""}) as mock_saga, \
-         patch("grpc_server.run_2pc_checkout", new_callable=AsyncMock) as mock_2pc:
+    store = WorkflowStore(tpc_db)
+    engine = WorkflowEngine(store=store, db=tpc_db)
 
-        servicer = OrchestratorServiceServicer(tpc_db)
+    with patch.object(engine, "execute", new_callable=AsyncMock,
+                      return_value={"success": True, "error_message": ""}) as mock_execute, \
+         patch("grpc_server.TRANSACTION_PATTERN", "saga"):
 
-        # Create a minimal mock request
+        servicer = OrchestratorServiceServicer(tpc_db, engine)
+
         class MockItem:
             def __init__(self):
                 self.item_id = "item-1"
@@ -426,8 +429,11 @@ async def test_pattern_toggle_saga(tpc_db, clean_tpc_db):
 
         result = await servicer.StartCheckout(MockRequest(), None)
 
-    mock_saga.assert_called_once()
-    mock_2pc.assert_not_called()
+    mock_execute.assert_called_once()
+    call_args = mock_execute.call_args
+    # Verify definition uses saga strategy
+    definition = call_args[0][1]  # second positional arg
+    assert definition.strategy == "saga"
 
 
 # ---------------------------------------------------------------------------
@@ -435,15 +441,19 @@ async def test_pattern_toggle_saga(tpc_db, clean_tpc_db):
 # ---------------------------------------------------------------------------
 
 async def test_pattern_toggle_2pc(tpc_db, clean_tpc_db):
-    """TRANSACTION_PATTERN=2pc -> StartCheckout calls run_2pc_checkout."""
+    """TRANSACTION_PATTERN=2pc -> StartCheckout uses 2pc strategy via engine."""
     from grpc_server import OrchestratorServiceServicer
+    from workflow_store import WorkflowStore
+    from workflow_engine import WorkflowEngine
 
-    with patch("grpc_server.TRANSACTION_PATTERN", "2pc"), \
-         patch("grpc_server.run_checkout", new_callable=AsyncMock) as mock_saga, \
-         patch("grpc_server.run_2pc_checkout", new_callable=AsyncMock,
-               return_value={"success": True, "error_message": ""}) as mock_2pc:
+    store = WorkflowStore(tpc_db)
+    engine = WorkflowEngine(store=store, db=tpc_db)
 
-        servicer = OrchestratorServiceServicer(tpc_db)
+    with patch.object(engine, "execute", new_callable=AsyncMock,
+                      return_value={"success": True, "error_message": ""}) as mock_execute, \
+         patch("grpc_server.TRANSACTION_PATTERN", "2pc"):
+
+        servicer = OrchestratorServiceServicer(tpc_db, engine)
 
         class MockItem:
             def __init__(self):
@@ -458,5 +468,8 @@ async def test_pattern_toggle_2pc(tpc_db, clean_tpc_db):
 
         result = await servicer.StartCheckout(MockRequest(), None)
 
-    mock_2pc.assert_called_once()
-    mock_saga.assert_not_called()
+    mock_execute.assert_called_once()
+    call_args = mock_execute.call_args
+    # Verify definition uses 2pc strategy
+    definition = call_args[0][1]  # second positional arg
+    assert definition.strategy == "2pc"

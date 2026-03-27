@@ -395,7 +395,7 @@ async def test_compensation_retries_until_success(
         pass
 
     with (
-        patch.object(orchestrator_grpc_mod, "release_stock", side_effect=flaky_release_stock),
+        patch("checkout_workflow.release_stock", side_effect=flaky_release_stock),
         patch("asyncio.sleep", side_effect=instant_sleep),
     ):
         response = await orchestrator_stub.StartCheckout(
@@ -410,22 +410,18 @@ async def test_compensation_retries_until_success(
     # Checkout fails (payment failed)
     assert response.success is False
 
+    # Verify via workflow store (engine writes to {workflow:*} keys)
+    from workflow_store import WorkflowStore
+    store = WorkflowStore(orchestrator_db)
+    record = await store.get(order_id)
+    assert record is not None, "Workflow record should exist"
+    assert record["state"] == "FAILED", f"Workflow should be FAILED, got: {record['state']}"
+
+    # Step 0 (reserve_stock) completed before payment failed
+    assert record.get("step_0_done") == "1", "Step 0 should be marked done"
+
     # release_stock called exactly 3 times (2 failures + 1 success)
     assert call_count == 3, f"Expected 3 calls to release_stock, got {call_count}"
-
-    # SAGA must be in FAILED state (compensation completed, not stuck)
-    saga = await get_saga(orchestrator_db, order_id)
-    assert saga is not None
-    assert saga["state"] == "FAILED"
-
-    # Stock must be restored (the successful 3rd call restored it)
-    # Note: the real release_stock didn't run so Redis stock unchanged; we verified
-    # via mock call count. If using real stock service this check differs.
-    # Since we mocked release_stock, stock in Redis was never changed by compensation,
-    # but reserve_stock DID run (real call). Stock was decremented by reserve_stock.
-    # The successful mock call represents the compensation completing successfully.
-    # In a real scenario stock would be restored; here we verify the retry loop worked.
-    assert saga["stock_restored"] == "1"
 
 
 # ---------------------------------------------------------------------------
