@@ -36,6 +36,10 @@ from consumers import (
     _handle_compensation_message,
     MAX_RETRIES,
 )
+from workflow_store import WorkflowStore
+from workflow_engine import WorkflowEngine
+from checkout_workflow import make_checkout_workflow
+import transport as _transport_mod
 
 
 # ---------------------------------------------------------------------------
@@ -285,60 +289,61 @@ async def test_consumer_graceful_shutdown():
 
 async def test_checkout_publishes_lifecycle_events(events_db, monkeypatch):
     """
-    EVENT-03: run_checkout publishes expected lifecycle events for the full happy path.
+    EVENT-03: engine.execute() publishes expected lifecycle events for the full happy path.
 
-    Verifies that checkout_started, stock_reserved, payment_completed, and
-    saga_completed events all appear in the stream with correct fields.
+    Verifies that workflow_started and workflow_succeeded events appear in the
+    stream with correct fields after a successful SAGA checkout via the engine.
     """
-    from grpc_server import run_checkout
-
     await setup_consumer_groups(events_db)
 
-    # Mock gRPC client functions to simulate successful stock/payment.
-    # grpc_server imports reserve_stock and charge_payment directly via
-    # "from client import ...", so we must patch them in the grpc_server module.
+    # Mock transport functions to simulate successful stock/payment.
+    # checkout_workflow imports reserve_stock and charge_payment from transport,
+    # so we patch them on the transport module.
     mock_reserve = AsyncMock(return_value={"success": True, "error_message": ""})
     mock_charge = AsyncMock(return_value={"success": True, "error_message": ""})
 
-    import grpc_server as _grpc_server_mod
-    monkeypatch.setattr(_grpc_server_mod, "reserve_stock", mock_reserve)
-    monkeypatch.setattr(_grpc_server_mod, "charge_payment", mock_charge)
+    monkeypatch.setattr(_transport_mod, "reserve_stock", mock_reserve)
+    monkeypatch.setattr(_transport_mod, "charge_payment", mock_charge)
 
-    result = await run_checkout(
-        events_db,
+    store = WorkflowStore(events_db)
+    engine = WorkflowEngine(store=store, db=events_db)
+    definition = make_checkout_workflow("saga")
+
+    result = await engine.execute(
         "lifecycle-test",
-        "user1",
-        [{"item_id": "item1", "quantity": 1}],
-        500,
+        definition,
+        {
+            "order_id": "lifecycle-test",
+            "user_id": "user1",
+            "items": [{"item_id": "item1", "quantity": 1}],
+            "total_cost": 500,
+        },
     )
 
     assert result["success"] is True, (
-        f"run_checkout should succeed with mocked gRPC calls, got: {result}"
+        f"engine.execute should succeed with mocked transport calls, got: {result}"
     )
 
     # Read all events from the stream
     entries = await events_db.xrange(STREAM_NAME)
-    assert entries, "Stream should have events after run_checkout"
+    assert entries, "Stream should have events after engine.execute()"
 
     event_types = [e[1][b"event_type"].decode() for e in entries]
 
-    # All four lifecycle events must be present in order
-    required_events = ["checkout_started", "stock_reserved", "payment_completed", "saga_completed"]
+    # Engine publishes workflow_started and workflow_succeeded lifecycle events
+    required_events = ["workflow_started", "workflow_succeeded"]
     for ev in required_events:
         assert ev in event_types, (
             f"Expected event '{ev}' in stream events, got: {event_types}"
         )
 
-    # Verify ordering: checkout_started comes before saga_completed
-    assert event_types.index("checkout_started") < event_types.index("saga_completed"), (
-        "checkout_started must appear before saga_completed"
+    # Verify ordering: workflow_started comes before workflow_succeeded
+    assert event_types.index("workflow_started") < event_types.index("workflow_succeeded"), (
+        "workflow_started must appear before workflow_succeeded"
     )
 
-    # All events should reference the same order_id and schema_version=v1
+    # All events should reference schema_version=v1
     for _msg_id, fields in entries:
-        assert fields.get(b"order_id") == b"lifecycle-test", (
-            f"Expected b'lifecycle-test' order_id, got {fields.get(b'order_id')}"
-        )
         assert fields.get(b"schema_version") == b"v1", (
             f"Expected b'v1' schema_version, got {fields.get(b'schema_version')}"
         )
