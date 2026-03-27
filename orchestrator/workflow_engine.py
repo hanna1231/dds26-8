@@ -62,7 +62,22 @@ class WorkflowEngine:
             raise ValueError(f"Unknown strategy: {definition.strategy!r}")
 
         initial_state = _INITIAL_STATES[definition.strategy]
-        await self._store.create(workflow_id, initial_state, metadata=context)
+        # Persist strategy field for recovery (Phase 17 Pitfall 5)
+        created = await self._store.create(
+            workflow_id, initial_state,
+            metadata={**context, "strategy": definition.strategy}
+        )
+        if not created:
+            # Duplicate: read stored result and return
+            existing = await self._store.get(workflow_id)
+            if existing is None:
+                return {"success": False, "error_message": "internal error"}
+            state = existing.get("state", "")
+            if state in ("COMPLETED", "COMMITTED"):
+                return {"success": True, "error_message": ""}
+            if state in ("FAILED", "ABORTED"):
+                return {"success": False, "error_message": existing.get("error_message", "")}
+            return {"success": False, "error_message": "checkout already in progress"}
 
         await publish_event(self._db, "workflow_started", workflow_id,
                             context.get("order_id", ""), context.get("user_id", ""))

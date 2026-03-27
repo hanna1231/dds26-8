@@ -8,6 +8,8 @@ from transport import COMM_MODE
 from recovery import recover_incomplete_sagas, recover_incomplete_tpc
 from consumers import setup_consumer_groups, compensation_consumer, audit_consumer, init_stop_event
 from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
+from workflow_store import WorkflowStore
+from workflow_engine import WorkflowEngine
 
 app = Quart("orchestrator-service")
 db = None
@@ -26,6 +28,8 @@ async def startup():
         require_full_coverage=True,
     )
     await db.initialize()
+    store = WorkflowStore(db)
+    engine = WorkflowEngine(store=store, db=db)
     if COMM_MODE == "queue":
         from queue_client import init_queue_client
         from reply_listener import setup_reply_consumer_group, reply_listener
@@ -40,7 +44,7 @@ async def startup():
     _stop_event = init_stop_event()
     if COMM_MODE == "queue":
         app.add_background_task(reply_listener, db, _stop_event)
-    app.add_background_task(serve_grpc, db)
+    app.add_background_task(serve_grpc, db, engine)
     app.add_background_task(compensation_consumer, db)
     app.add_background_task(audit_consumer, db)
 
