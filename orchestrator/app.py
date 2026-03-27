@@ -5,7 +5,7 @@ from redis.asyncio.cluster import RedisCluster, ClusterNode
 from quart import Quart, jsonify
 from grpc_server import serve_grpc, stop_grpc_server
 from transport import COMM_MODE
-from recovery import recover_incomplete_sagas, recover_incomplete_tpc, recover_incomplete_workflows
+from recovery import recover_incomplete_workflows
 from consumers import setup_consumer_groups, compensation_consumer, audit_consumer, init_stop_event
 from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
 from workflow_store import WorkflowStore
@@ -38,8 +38,6 @@ async def startup():
     else:
         from client import init_grpc_clients
         await init_grpc_clients()
-    await recover_incomplete_sagas(db)
-    await recover_incomplete_tpc(db)
     await recover_incomplete_workflows(db, engine)
     await setup_consumer_groups(db)
     _stop_event = init_stop_event()

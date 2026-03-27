@@ -124,13 +124,6 @@ async def _handle_compensation_message(db, group, msg_id, fields, engine=None) -
                 }
                 definition = make_checkout_workflow(strategy)
                 await engine.resume(order_id, definition, context)
-        elif order_id:
-            # Fallback: use old compensation path if no engine (backward compat)
-            from grpc_server import run_compensation
-            from saga import get_saga
-            saga = await get_saga(db, order_id)
-            if saga and saga.get("state") == "COMPENSATING":
-                await run_compensation(db, saga)
         await db.xack(STREAM_NAME, group, msg_id)
     except Exception as exc:
         logging.warning("Compensation for %s failed: %s (will retry)",
