@@ -32,17 +32,21 @@ def _build_event(event_type: str, saga_id: str, order_id: str,
     }
 
 
-async def publish_event(db, event_type: str, saga_id: str,
+async def publish_event(db, event_type: str, workflow_id: str,
                         order_id: str, user_id: str = "", **extra) -> None:
     """
     Fire-and-forget XADD to saga:checkout:events stream.
 
     Never raises. On any failure, increments dropped_events counter
     and logs warning. Stream entries use approximate trimming at MAXLEN 10000.
+
+    The public API uses workflow_id; internally the wire format retains saga_id
+    for backward compatibility.
     """
     global _dropped_events
     try:
-        fields = _build_event(event_type, saga_id, order_id, user_id, **extra)
+        fields = _build_event(event_type, saga_id=workflow_id, order_id=order_id,
+                              user_id=user_id, **extra)
         await db.xadd(
             STREAM_NAME,
             fields,
