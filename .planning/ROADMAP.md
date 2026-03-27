@@ -3,7 +3,8 @@
 ## Milestones
 
 - ✅ **v1.0 Distributed Checkout System** -- Phases 1-7 (shipped 2026-03-11)
-- 🚧 **v2.0 2PC & Message Queues** -- Phases 8-13 (in progress)
+- ✅ **v2.0 2PC & Message Queues** -- Phases 8-13 (shipped 2026-03-26)
+- 🚧 **v3.0 Abstract Orchestrator & Refactoring** -- Phases 14-18 (in progress)
 
 ## Phases
 
@@ -22,115 +23,96 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 </details>
 
-### v2.0 2PC & Message Queues
+<details>
+<summary>v2.0 2PC & Message Queues (Phases 8-13) -- SHIPPED 2026-03-26</summary>
 
-**Milestone Goal:** Add Two-Phase Commit as an alternative transaction pattern and migrate inter-service communication to Redis Streams message queues, with env var toggles for both SAGA/2PC and queue/gRPC paths.
+- [x] Phase 8: Business Logic Extraction (0/2 plans) -- completed 2026-03-26
+- [x] Phase 9: Queue Infrastructure (2/2 plans) -- completed 2026-03-12
+- [x] Phase 10: Transport Adapter (1/1 plans) -- completed 2026-03-12
+- [x] Phase 11: 2PC State Machine & Participants (2/2 plans) -- completed 2026-03-12
+- [x] Phase 12: 2PC Coordinator & Recovery (2/2 plans) -- completed 2026-03-12
+- [x] Phase 13: Integration & Benchmark (1/2 plans) -- completed 2026-03-26
+
+</details>
+
+### v3.0 Abstract Orchestrator & Refactoring
+
+**Milestone Goal:** Abstract SAGA/2PC coordination into a generic workflow engine artifact and refactor the codebase for quality, maintainability, and interview readiness. The checkout transaction is re-expressed as a WorkflowDefinition; the engine drives execution without knowing about Stock or Payment. Both SAGA and 2PC run through the same engine entry point.
 
 **Phase Numbering:**
-- Integer phases (8, 9, ...): Planned milestone work
-- Decimal phases (9.1, 9.2): Urgent insertions (marked with INSERTED)
+- Integer phases (14, 15, ...): Planned milestone work
+- Decimal phases (14.1, 14.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 8: Business Logic Extraction** - Extract Stock and Payment business logic from gRPC servicers into shared operations modules
-- [x] **Phase 9: Queue Infrastructure** - Build Redis Streams request/reply messaging with consumer groups and correlation ID routing (completed 2026-03-12)
-- [x] **Phase 10: Transport Adapter** - Create transport abstraction enabling transparent gRPC/queue swap with COMM_MODE toggle (completed 2026-03-12)
-- [x] **Phase 11: 2PC State Machine & Participants** - Build 2PC state machine and tentative reservation Lua scripts for Stock and Payment (completed 2026-03-12)
-- [x] **Phase 12: 2PC Coordinator & Recovery** - Implement 2PC coordinator flow, WAL pattern, recovery scanner, and TRANSACTION_PATTERN toggle (completed 2026-03-12)
-- [ ] **Phase 13: Integration & Benchmark** - Validate all 4 mode combinations with integration tests, kill-tests, and benchmark
+- [ ] **Phase 14: Engine Core** - Define WorkflowStep/WorkflowDefinition data model and build generic Redis-persisted WorkflowStore with Lua CAS transitions
+- [ ] **Phase 15: Execution Strategies** - Implement SagaStrategy (sequential + reverse compensation) and TwoPhaseStrategy (concurrent prepare + WAL commit/abort)
+- [ ] **Phase 16: WorkflowEngine + Checkout Definition** - Wire store and strategies into WorkflowEngine.execute() and rewrite checkout as a WorkflowDefinition factory
+- [ ] **Phase 17: Wiring** - Replace hardcoded orchestration in grpc_server.py with engine.execute() and generalize recovery scanner to use engine API
+- [ ] **Phase 18: Cleanup & Refactoring** - Delete saga.py/tpc.py after validation, add named step logging, make engine injectable, and clean up the codebase
 
 ## Phase Details
 
-### Phase 8: Business Logic Extraction
-**Goal**: Stock and Payment business logic is callable from any transport layer without coupling to gRPC
-**Depends on**: Nothing (first phase of v2.0)
-**Requirements**: BLE-01, BLE-02
+### Phase 14: Engine Core
+**Goal**: Generic workflow persistence and data model are defined -- WorkflowStore handles all Redis state transitions via Lua CAS and WorkflowStep/WorkflowDefinition types give strategies and the engine a shared interface
+**Depends on**: Nothing (first phase of v3.0; builds on v2.0 Redis/Lua patterns)
+**Requirements**: ENG-01, ENG-02, ENG-04, ENG-05
 **Success Criteria** (what must be TRUE):
-  1. Stock service gRPC servicer delegates all business logic to `operations.py` functions -- no Lua scripts or Redis calls remain in the servicer
-  2. Payment service gRPC servicer delegates all business logic to `operations.py` functions -- no Lua scripts or Redis calls remain in the servicer
-  3. All existing integration tests pass unchanged (zero behavior change)
-**Plans:** 2 plans
+  1. `WorkflowStep` dataclass exists with name, async action callable, and async compensation callable fields
+  2. `WorkflowDefinition` dataclass exists with name, ordered steps list, and strategy field (saga/2pc)
+  3. `WorkflowStore.create()` initializes a workflow Redis hash using HSETNX -- concurrent calls for the same workflow_id are safe (exactly-once guarantee preserved)
+  4. `WorkflowStore.transition()` uses the extracted Lua CAS script -- invalid state transitions are rejected atomically
+  5. `WorkflowStore.mark_step_done()` writes `step_N_done` flags replacing hardcoded `stock_reserved`/`payment_charged` field names
+**Plans**: TBD
 
-Plans:
-- [ ] 08-01-PLAN.md — Extract Stock business logic into operations.py
-- [ ] 08-02-PLAN.md — Extract Payment business logic into operations.py
-
-### Phase 9: Queue Infrastructure
-**Goal**: Redis Streams request/reply messaging works end-to-end between orchestrator and domain services
-**Depends on**: Phase 8
-**Requirements**: MQC-01, MQC-02, MQC-03
+### Phase 15: Execution Strategies
+**Goal**: SAGA and 2PC execution logic lives in isolated, testable strategy classes that drive any WorkflowDefinition without knowledge of specific services
+**Depends on**: Phase 14
+**Requirements**: STR-01, STR-02, STR-03, STR-04
 **Success Criteria** (what must be TRUE):
-  1. Orchestrator can send commands to Stock and Payment via Redis Streams and receive replies with correct correlation
-  2. Stock and Payment queue consumers process commands by calling the same operations module functions as gRPC servicers
-  3. SAGA checkout completes successfully over queue transport (manual wiring, no toggle yet)
-  4. Consumer groups provide at-least-once delivery with proper ACK after processing
-**Plans:** 2/2 plans complete
+  1. `SagaStrategy.execute()` runs steps sequentially in definition order with bounded forward retry -- a step failure halts forward progress and triggers compensation
+  2. `SagaStrategy.compensate()` runs compensations in reverse step order with infinite retry -- each step's registered compensation callable is invoked, never a hardcoded flag check
+  3. `TwoPhaseStrategy.execute()` sends prepare concurrently to all steps, writes WAL decision (COMMITTING state) before sending phase-2 messages, and calls abort if any prepare fails
+  4. Both strategies accept and execute the same `WorkflowDefinition` object -- strategy selection is driven by the definition's `strategy` field, not by caller logic
+**Plans**: TBD
 
-Plans:
-- [ ] 09-01-PLAN.md — Orchestrator queue client and reply listener
-- [ ] 09-02-PLAN.md — Domain service queue consumers and integration tests
-
-### Phase 10: Transport Adapter
-**Goal**: Orchestrator transparently switches between gRPC and queue communication via a single env var
-**Depends on**: Phase 9
-**Requirements**: MQC-04, MQC-05
+### Phase 16: WorkflowEngine + Checkout Definition
+**Goal**: WorkflowEngine.execute() is the single entry point for all transaction coordination and checkout is expressed as a WorkflowDefinition factory -- the engine knows nothing about Stock or Payment
+**Depends on**: Phase 15
+**Requirements**: ENG-03, CHK-01
 **Success Criteria** (what must be TRUE):
-  1. Setting `COMM_MODE=grpc` uses gRPC transport; setting `COMM_MODE=queue` uses Redis Streams transport -- no other code changes needed
-  2. SAGA coordinator calls transport adapter functions with identical signatures regardless of mode
-  3. Full integration test suite passes in both SAGA+gRPC and SAGA+queue modes
-**Plans:** 1/1 plans complete
+  1. `WorkflowEngine.execute(workflow_id, definition, context)` routes to the correct strategy based on the definition's strategy field and publishes lifecycle events
+  2. `make_checkout_workflow()` in `workflows/checkout.py` returns a `WorkflowDefinition` whose steps are closures over `transport.py` functions -- no Stock/Payment service names appear in the engine or strategy modules
+  3. A full happy-path checkout driven through `engine.execute()` completes successfully with correct Redis state transitions
+  4. A stock failure mid-checkout triggers the registered compensation path and leaves no partial reservations
+**Plans**: TBD
+**UI hint**: no
 
-Plans:
-- [ ] 10-01-PLAN.md — Transport adapter with COMM_MODE toggle and caller updates
-
-### Phase 11: 2PC State Machine & Participants
-**Goal**: 2PC protocol state machine and participant-side tentative reservation logic are complete and unit-testable
-**Depends on**: Phase 8
-**Requirements**: TPC-01, TPC-02, TPC-03
+### Phase 17: Wiring
+**Goal**: The running system uses the workflow engine for all checkout coordination -- grpc_server.py, recovery.py, and consumers.py are updated to call engine APIs and all 37 integration tests pass
+**Depends on**: Phase 16
+**Requirements**: CHK-02, CHK-03
 **Success Criteria** (what must be TRUE):
-  1. 2PC state machine enforces valid transitions (INIT, PREPARING, COMMITTING, ABORTING, COMMITTED, ABORTED) via Lua CAS -- invalid transitions are rejected
-  2. Stock PREPARE atomically reserves all items in an order; COMMIT finalizes; ABORT releases -- partial prepare is impossible
-  3. Payment PREPARE atomically reserves funds; COMMIT finalizes; ABORT releases
-  4. All 2PC Lua scripts preserve idempotency (duplicate PREPARE/COMMIT/ABORT calls are safe)
-**Plans:** 2/2 plans complete
+  1. `grpc_server.py` calls only `engine.execute()` for checkout -- all hardcoded `run_checkout()` / `run_2pc_checkout()` call sites are gone
+  2. Recovery scanner calls `engine.resume()` for incomplete workflows -- it covers both SAGA and 2PC transactions discovered at startup
+  3. All 37 existing integration tests pass in both `COMM_MODE=grpc` and `COMM_MODE=queue` modes
+  4. Kill-test produces 0 consistency violations (no lost money or items) after the wiring change
+**Plans**: TBD
 
-Plans:
-- [ ] 11-01-PLAN.md — 2PC state machine (tpc.py) with Lua CAS transitions and tests
-- [ ] 11-02-PLAN.md — Stock and Payment 2PC participant operations (prepare/commit/abort)
-
-### Phase 12: 2PC Coordinator & Recovery
-**Goal**: Orchestrator can execute checkout via 2PC with crash recovery, switchable with SAGA via env var
-**Depends on**: Phase 10, Phase 11
-**Requirements**: TPC-04, TPC-05, TPC-06, TPC-07
+### Phase 18: Cleanup & Refactoring
+**Goal**: The codebase is clean, the superseded modules are deleted, and all log lines carry workflow context -- the engine is ready for demo and code review
+**Depends on**: Phase 17
+**Requirements**: REF-01, REF-02, REF-03, REF-04
 **Success Criteria** (what must be TRUE):
-  1. 2PC coordinator sends concurrent PREPARE to Stock and Payment, collects votes, and executes COMMIT or ABORT
-  2. Coordinator decision is persisted to Redis BEFORE sending phase-2 messages (WAL pattern) -- crash between phases recovers correctly
-  3. Recovery scanner distinguishes SAGA and 2PC transactions by protocol field and applies correct recovery logic
-  4. Setting `TRANSACTION_PATTERN=saga` uses SAGA; setting `TRANSACTION_PATTERN=2pc` uses 2PC -- no other code changes needed
-  5. 2PC+gRPC checkout completes end-to-end; 2PC+queue checkout completes end-to-end
-**Plans:** 2/2 plans complete
-
-Plans:
-- [ ] 12-01-PLAN.md — Extend transport layer with 2PC RPCs, servicers, client wrappers, queue dispatch, and transport adapter
-- [ ] 12-02-PLAN.md — 2PC coordinator (run_2pc_checkout), recovery scanner, and TRANSACTION_PATTERN toggle
-
-### Phase 13: Integration & Benchmark
-**Goal**: All 4 mode combinations are validated for correctness under normal operation, container failures, and benchmark load
-**Depends on**: Phase 12
-**Requirements**: INT-01, INT-02, INT-03
-**Success Criteria** (what must be TRUE):
-  1. All existing integration tests pass in all 4 mode combinations (SAGA/gRPC, SAGA/queue, 2PC/gRPC, 2PC/queue)
-  2. Kill-test produces 0 consistency violations (no lost money or items) in 2PC mode
-  3. wdm-project-benchmark passes with 0 consistency violations in all 4 modes
-**Plans:** 1/2 plans executed
-
-Plans:
-- [ ] 13-01-PLAN.md — Wire queue consumers in stock/payment, add docker-compose env vars and multi-mode Makefile targets
-- [ ] 13-02-PLAN.md — Run 4-mode integration tests, kill-tests, and benchmark validation
+  1. `saga.py` and `tpc.py` are deleted -- `grep -r "from saga import\|from tpc import" orchestrator/` returns no matches
+  2. All execution log lines include the step name and workflow_id -- a checkout trace in logs shows the named sequence (e.g., "reserve_stock", "charge_payment")
+  3. `WorkflowEngine` is instantiated in `app.py` and injected as a dependency -- no module-level engine singleton or global mutable state exists in any engine module
+  4. Benchmark passes with 0 consistency violations after all refactoring changes
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 8 -> 9 -> 10 -> 11 -> 12 -> 13
-Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parallel after Phase 8. Phase 12 requires both Phase 10 and Phase 11.
+Phases execute sequentially: 14 -> 15 -> 16 -> 17 -> 18
+Each phase's output is the next phase's direct input -- no parallel execution within v3.0.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -141,9 +123,14 @@ Note: Phases 9-10 (queue) and Phase 11 (2PC state machine) can proceed in parall
 | 5. Event-Driven Architecture | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 6. Infrastructure | v1.0 | 3/3 | Complete | 2026-03-01 |
 | 7. Validation and Delivery | v1.0 | 3/3 | Complete | 2026-03-01 |
-| 8. Business Logic Extraction | v2.0 | 0/2 | Not started | - |
-| 9. Queue Infrastructure | 2/2 | Complete   | 2026-03-12 | - |
-| 10. Transport Adapter | 1/1 | Complete    | 2026-03-12 | - |
-| 11. 2PC State Machine & Participants | 2/2 | Complete    | 2026-03-12 | - |
-| 12. 2PC Coordinator & Recovery | 2/2 | Complete    | 2026-03-12 | - |
-| 13. Integration & Benchmark | 1/2 | In Progress|  | - |
+| 8. Business Logic Extraction | v2.0 | 0/2 | Complete | 2026-03-26 |
+| 9. Queue Infrastructure | v2.0 | 2/2 | Complete | 2026-03-12 |
+| 10. Transport Adapter | v2.0 | 1/1 | Complete | 2026-03-12 |
+| 11. 2PC State Machine & Participants | v2.0 | 2/2 | Complete | 2026-03-12 |
+| 12. 2PC Coordinator & Recovery | v2.0 | 2/2 | Complete | 2026-03-12 |
+| 13. Integration & Benchmark | v2.0 | 1/2 | Complete | 2026-03-26 |
+| 14. Engine Core | v3.0 | 0/TBD | Not started | - |
+| 15. Execution Strategies | v3.0 | 0/TBD | Not started | - |
+| 16. WorkflowEngine + Checkout Definition | v3.0 | 0/TBD | Not started | - |
+| 17. Wiring | v3.0 | 0/TBD | Not started | - |
+| 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |
