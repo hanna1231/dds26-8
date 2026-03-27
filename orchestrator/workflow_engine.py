@@ -7,6 +7,7 @@ Calls store.create() with strategy-appropriate initial state before delegating.
 
 Per ENG-03: execute(workflow_id, definition, context) is the only public method.
 Per REF-03: WorkflowEngine receives WorkflowStore via constructor (injectable).
+Per REF-03: _strategies and _initial_states are instance attributes (not module-level).
 """
 from workflow_store import WorkflowStore
 from workflow_types import WorkflowDefinition
@@ -14,27 +15,27 @@ from saga_strategy import SagaStrategy
 from tpc_strategy import TwoPhaseStrategy
 from events import publish_event
 
-_STRATEGIES = {
-    "saga": SagaStrategy(),
-    "2pc": TwoPhaseStrategy(),
-}
-
-_INITIAL_STATES = {
-    "saga": "STARTED",
-    "2pc": "INIT",
-}
-
 
 class WorkflowEngine:
     """Single entry point for all transaction coordination.
 
     Receives WorkflowStore and Redis db via constructor (injectable dependency).
     execute() routes to the correct strategy and wraps with lifecycle events.
+    _strategies and _initial_states are instance attributes for testability and
+    strict REF-03 compliance (no module-level mutable state).
     """
 
     def __init__(self, store: WorkflowStore, db):
         self._store = store
         self._db = db
+        self._strategies = {
+            "saga": SagaStrategy(),
+            "2pc": TwoPhaseStrategy(),
+        }
+        self._initial_states = {
+            "saga": "STARTED",
+            "2pc": "INIT",
+        }
 
     async def execute(self, workflow_id: str, definition: WorkflowDefinition, context: dict) -> dict:
         """Execute a workflow using the strategy specified in the definition.
@@ -57,11 +58,11 @@ class WorkflowEngine:
         Raises:
             ValueError: If definition.strategy is not in the registry.
         """
-        strategy = _STRATEGIES.get(definition.strategy)
+        strategy = self._strategies.get(definition.strategy)
         if strategy is None:
             raise ValueError(f"Unknown strategy: {definition.strategy!r}")
 
-        initial_state = _INITIAL_STATES[definition.strategy]
+        initial_state = self._initial_states[definition.strategy]
         # Persist strategy field for recovery (Phase 17 Pitfall 5)
         created = await self._store.create(
             workflow_id, initial_state,
@@ -104,7 +105,7 @@ class WorkflowEngine:
         Returns:
             {"success": bool, "error_message": str}
         """
-        strategy = _STRATEGIES.get(definition.strategy)
+        strategy = self._strategies.get(definition.strategy)
         if strategy is None:
             raise ValueError(f"Unknown strategy: {definition.strategy!r}")
 

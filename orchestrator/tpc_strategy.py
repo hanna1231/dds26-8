@@ -89,6 +89,8 @@ class TwoPhaseStrategy:
         await store.transition(workflow_id, "INIT", "PREPARING")
 
         # Build prepare futures (call at comprehension time -- captures step correctly)
+        for step in definition.steps:
+            logger.info("workflow_id=%s step=%s preparing", workflow_id, step.name)
         futures = [step.action(context) for step in definition.steps]
         results = await asyncio.gather(*futures, return_exceptions=True)
 
@@ -100,11 +102,14 @@ class TwoPhaseStrategy:
                 all_yes = False
                 if not first_error:
                     first_error = str(r)
+                logger.warning("workflow_id=%s step=%s prepare failed: %s", workflow_id, definition.steps[i].name, r)
             elif not r.get("success"):
                 all_yes = False
                 if not first_error:
                     first_error = r.get("error_message", "prepare failed")
+                logger.warning("workflow_id=%s step=%s prepare voted NO: %s", workflow_id, definition.steps[i].name, r.get("error_message", ""))
             else:
+                logger.info("workflow_id=%s step=%s prepare voted YES", workflow_id, definition.steps[i].name)
                 # Successful prepare vote: record in store
                 await store.mark_step_done(workflow_id, i)
 
@@ -113,6 +118,7 @@ class TwoPhaseStrategy:
             self._validate_transition("PREPARING", "COMMITTING")
             await store.transition(workflow_id, "PREPARING", "COMMITTING")
 
+            logger.info("workflow_id=%s committing all steps", workflow_id)
             # --- Phase 2a: Send COMMITs concurrently ---
             commit_futures = [step.action(context) for step in definition.steps]
             await asyncio.gather(*commit_futures, return_exceptions=True)
@@ -127,6 +133,7 @@ class TwoPhaseStrategy:
             self._validate_transition("PREPARING", "ABORTING")
             await store.transition(workflow_id, "PREPARING", "ABORTING")
 
+            logger.info("workflow_id=%s aborting all steps", workflow_id)
             # --- Phase 2b: Send ABORTs (compensations) concurrently ---
             abort_futures = [step.compensation(context) for step in definition.steps]
             await asyncio.gather(*abort_futures, return_exceptions=True)

@@ -12,9 +12,13 @@ State sequence for forward execution:
 On step failure:
   current_state -> COMPENSATING -> FAILED
 """
+import logging
+
 from workflow_types import WorkflowDefinition, WorkflowStep  # noqa: F401
 from workflow_store import WorkflowStore
 from retry import retry_forward, retry_forever
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +87,14 @@ class SagaStrategy:
         completed_step_indices: list[int] = []
 
         for i, step in enumerate(definition.steps):
+            logger.info("workflow_id=%s step=%s executing", workflow_id, step.name)
             try:
                 result = await retry_forward(lambda s=step, c=context: s.action(c))
             except Exception as exc:
                 result = {"success": False, "error_message": str(exc)}
 
             if not result.get("success"):
+                logger.warning("workflow_id=%s step=%s failed: %s", workflow_id, step.name, result.get("error_message", ""))
                 # Transition to COMPENSATING
                 current_state = STATE_SEQUENCE[i]
                 self._validate_transition(current_state, "COMPENSATING")
@@ -104,6 +110,7 @@ class SagaStrategy:
                 )
                 return {"success": False, "error_message": result.get("error_message", "")}
 
+            logger.info("workflow_id=%s step=%s completed", workflow_id, step.name)
             # Step succeeded: record completion and transition state
             await store.mark_step_done(workflow_id, i)
             completed_step_indices.append(i)
@@ -152,6 +159,7 @@ class SagaStrategy:
         # Compensate in reverse order of completion
         for i in reversed(completed_indices):
             step = definition.steps[i]
+            logger.info("workflow_id=%s step=%s compensating", workflow_id, step.name)
             await retry_forever(lambda s=step, c=context: s.compensation(c))
 
         # Transition COMPENSATING -> FAILED
@@ -179,6 +187,8 @@ class SagaStrategy:
 
         Mirrors recovery.py:resume_saga() but expressed through strategy class.
         """
+        logger.info("workflow_id=%s resuming from state=%s", workflow_id, state)
+
         if state == "COMPENSATING":
             return await self.compensate(
                 workflow_id, definition, context, store, completed_indices=None
