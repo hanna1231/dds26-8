@@ -47,7 +47,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 15: Execution Strategies** - Implement SagaStrategy (sequential + reverse compensation) and TwoPhaseStrategy (concurrent prepare + WAL commit/abort) (completed 2026-03-27)
 - [x] **Phase 16: WorkflowEngine + Checkout Definition** - Wire store and strategies into WorkflowEngine.execute() and rewrite checkout as a WorkflowDefinition factory (completed 2026-03-27)
 - [x] **Phase 17: Wiring** - Replace hardcoded orchestration in grpc_server.py with engine.execute() and generalize recovery scanner to use engine API (completed 2026-03-27)
-- [ ] **Phase 18: Cleanup & Refactoring** - Delete saga.py/tpc.py after validation, add named step logging, make engine injectable, and clean up the codebase
+- [x] **Phase 18: Cleanup & Refactoring** - Delete saga.py/tpc.py after validation, add named step logging, make engine injectable, and clean up the codebase (completed 2026-03-27)
 
 ## Phase Details
 
@@ -116,9 +116,9 @@ Plans:
   2. All execution log lines include the step name and workflow_id -- a checkout trace in logs shows the named sequence (e.g., "reserve_stock", "charge_payment")
   3. `WorkflowEngine` is instantiated in `app.py` and injected as a dependency -- no module-level engine singleton or global mutable state exists in any engine module
   4. Benchmark passes with 0 consistency violations after all refactoring changes
-**Plans:** 0/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
-- [ ] 18-01-PLAN.md -- Migrate test files off saga/tpc imports (REF-01, REF-04)
+- [x] 18-01-PLAN.md -- Migrate test files off saga/tpc imports (REF-01, REF-04)
 - [ ] 18-02-PLAN.md -- Delete dead modules + add step logging + injectable engine (REF-01, REF-02, REF-03, REF-04)
 
 ## Progress
@@ -146,4 +146,4 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Complete    | 2026-03-27 |
 | 17. Wiring | v3.0 | 2/2 | Complete    | 2026-03-27 |
-| 18. Cleanup & Refactoring | v3.0 | 0/2 | Planned    |  |
+| 18. Cleanup & Refactoring | v3.0 | 1/2 | Complete    | 2026-03-27 |

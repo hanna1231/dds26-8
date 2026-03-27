@@ -30,10 +30,10 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Refactoring & Cleanup
 
-- [ ] **REF-01**: saga.py and tpc.py deleted after engine migration is validated
-- [ ] **REF-02**: Named step execution logging (step names in log lines with workflow_id context)
-- [ ] **REF-03**: WorkflowEngine as injectable dependency (no global mutable state in engine module)
-- [ ] **REF-04**: General codebase cleanup for clarity, consistency, and maintainability
+- [x] **REF-01**: saga.py and tpc.py deleted after engine migration is validated
+- [x] **REF-02**: Named step execution logging (step names in log lines with workflow_id context)
+- [x] **REF-03**: WorkflowEngine as injectable dependency (no global mutable state in engine module)
+- [x] **REF-04**: General codebase cleanup for clarity, consistency, and maintainability
 
 ## Future Requirements
 
@@ -78,10 +78,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CHK-01 | Phase 16 | Pending |
 | CHK-02 | Phase 17 | Complete |
 | CHK-03 | Phase 17 | Complete |
-| REF-01 | Phase 18 | Pending |
-| REF-02 | Phase 18 | Pending |
-| REF-03 | Phase 18 | Pending |
-| REF-04 | Phase 18 | Pending |
+| REF-01 | Phase 18 | Complete |
+| REF-02 | Phase 18 | Complete |
+| REF-03 | Phase 18 | Complete |
+| REF-04 | Phase 18 | Complete |
 
 **Coverage:**
 - v3.0 requirements: 16 total

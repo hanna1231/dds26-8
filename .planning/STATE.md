@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Abstract Orchestrator & Refactoring
-status: Ready to execute
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-03-27T14:55:32.063Z"
+status: Milestone complete
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-03-27T15:18:16.078Z"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 9
 ---
 
 # Project State
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 
 ## Current Position
 
-Phase: 18 (cleanup-refactoring) — EXECUTING
-Plan: 2 of 2
+Phase: 18
+Plan: Not started
 
 ## Performance Metrics
 
@@ -62,6 +62,8 @@ Recent decisions affecting current work:
 - [Phase 17]: SagaStrategy.resume() skips already-completed steps by reading step_N_done flags before re-executing forward path
 - [Phase 17]: Old recover_incomplete_sagas/recover_incomplete_tpc functions preserved -- Phase 18 REF-01 will delete them
 - [Phase 18-01]: Test lifecycle event names updated to workflow_started/workflow_succeeded (engine publishes these, not old saga event names)
+- [Phase 18]: Delete saga.py and tpc.py; all orchestration flows through WorkflowEngine + strategy classes
+- [Phase 18]: Move _STRATEGIES/_INITIAL_STATES to WorkflowEngine instance attributes for strict REF-03 compliance
 
 ### Pending Todos
 
@@ -75,6 +77,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T14:55:32.060Z
-Stopped at: Completed 18-01-PLAN.md
+Last session: 2026-03-27T15:09:54.499Z
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
