@@ -49,7 +49,7 @@ Checkout transactions must never lose money or item counts — consistency is no
 - [x] Generic workflow engine as separate orchestrator artifact (Cadence/Temporal-inspired) — Phase 16
 - [x] Checkout rewritten as workflow definition using abstract engine API — Phase 16
 - [x] Engine supports both SAGA and 2PC execution strategies — Phase 15
-- [ ] Codebase refactoring for clarity, consistency, and maintainability
+- [x] Codebase refactoring for clarity, consistency, and maintainability — Phase 18
 
 ## Current Milestone: v3.0 Abstract Orchestrator & Refactoring
 
@@ -124,4 +124,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-27 after Phase 17 (Wiring) completion*
+*Last updated: 2026-03-27 after Phase 18 (Cleanup & Refactoring) completion — v3.0 milestone complete*
