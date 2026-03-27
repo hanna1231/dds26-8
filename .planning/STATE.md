@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Abstract Orchestrator & Refactoring
-status: in-progress
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-03-27T00:15:00Z"
+status: Ready to plan
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-03-27T11:52:10.159Z"
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 4
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Checkout transactions must never lose money or item counts -- consistency is non-negotiable, even when containers crash mid-transaction.
-**Current focus:** Phase 15 — execution-strategies
+**Current focus:** Phase 16 — workflowengine-checkout-definition
 
 ## Current Position
 
-Phase: 16
-Plan: 2 of 2 in current phase (16-02 complete)
+Phase: 17
+Plan: Not started
 
 ## Performance Metrics
 
@@ -55,11 +55,8 @@ Recent decisions affecting current work:
 - [Phase 15]: STATE_SEQUENCE hardcoded as module-level list for SAGA state progression (domain-specific)
 - [Phase 15]: TwoPhaseStrategy does NOT import retry.py -- 2PC prepare is fire-once concurrent, not bounded-retry
 - [Phase 15]: Phase-2 commit uses step.action again (same callable as prepare) aligning with grpc_server.py pattern
-- [16-02]: make_checkout_workflow uses module-level async functions (not closures) to avoid Python late-binding bug
-- [16-02]: Exactly 2 steps for both saga and 2pc (SAGA STATE_SEQUENCE has 4 entries: STARTED + 2 + COMPLETED)
-- [16-02]: Idempotency key format {saga:ORDER_ID}:step:reserve:ITEM_ID matches grpc_server.py exactly
-- [16-02]: 2PC uses order_id directly as correlation key (no separate idempotency_key parameter)
-- [16-02]: checkout_workflow.py is the sole boundary layer; engine and strategies remain service-name-free
+- [Phase 16-workflowengine-checkout-definition]: WorkflowEngine receives WorkflowStore via constructor (injectable per REF-03)
+- [Phase 16-workflowengine-checkout-definition]: events.py publish_event: saga_id param renamed to workflow_id; wire format retains saga_id
 
 ### Pending Todos
 
@@ -73,6 +70,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T00:15:00Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-03-27T11:41:35.630Z
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None

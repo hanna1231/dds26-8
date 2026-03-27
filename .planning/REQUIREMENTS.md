@@ -11,7 +11,7 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 - [x] **ENG-01**: WorkflowStep dataclass with name, async action callable, and async compensation callable
 - [x] **ENG-02**: WorkflowDefinition dataclass with name, ordered steps list, and strategy field (saga/2pc)
-- [ ] **ENG-03**: WorkflowEngine class with execute(workflow_id, definition, context) entry point that routes to strategy
+- [x] **ENG-03**: WorkflowEngine class with execute(workflow_id, definition, context) entry point that routes to strategy
 - [x] **ENG-04**: Durable workflow state persisted in Redis using existing Lua CAS transition pattern
 - [x] **ENG-05**: Per-step completion flags (step_N_done) replacing hardcoded field names (stock_reserved, payment_charged)
 
@@ -24,7 +24,7 @@ Requirements for v3.0 milestone. Each maps to roadmap phases.
 
 ### Checkout Abstraction
 
-- [x] **CHK-01**: checkout_workflow.py defining checkout as WorkflowDefinition using transport.py functions
+- [ ] **CHK-01**: checkout_workflow.py defining checkout as WorkflowDefinition using transport.py functions
 - [ ] **CHK-02**: grpc_server.py refactored to receive WorkflowEngine and call engine.execute() only
 - [ ] **CHK-03**: Recovery scanner generalized to read workflow state and resume via engine API
 
@@ -74,8 +74,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STR-02 | Phase 15 | Complete |
 | STR-03 | Phase 15 | Complete |
 | STR-04 | Phase 15 | Complete |
-| ENG-03 | Phase 16 | Pending |
-| CHK-01 | Phase 16 | Complete |
+| ENG-03 | Phase 16 | Complete |
+| CHK-01 | Phase 16 | Pending |
 | CHK-02 | Phase 17 | Pending |
 | CHK-03 | Phase 17 | Pending |
 | REF-01 | Phase 18 | Pending |
