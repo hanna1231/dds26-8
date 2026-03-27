@@ -142,5 +142,5 @@ Each phase's output is the next phase's direct input -- no parallel execution wi
 | 14. Engine Core | v3.0 | 1/1 | Complete    | 2026-03-27 |
 | 15. Execution Strategies | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 16. WorkflowEngine + Checkout Definition | v3.0 | 0/2 | Complete    | 2026-03-27 |
-| 17. Wiring | v3.0 | 2/2 | Complete   | 2026-03-27 |
+| 17. Wiring | v3.0 | 2/2 | Complete    | 2026-03-27 |
 | 18. Cleanup & Refactoring | v3.0 | 0/TBD | Not started | - |
