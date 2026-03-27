@@ -40,7 +40,7 @@ async def setup_consumer_groups(db) -> None:
                 raise
 
 
-async def compensation_consumer(db) -> None:
+async def compensation_consumer(db, engine=None) -> None:
     group = "compensation-handler"
     consumer_name = "orchestrator-1"
     logging.info("compensation_consumer started")
@@ -55,7 +55,7 @@ async def compensation_consumer(db) -> None:
                 )
                 claimed_messages = autoclaim_result[1] if autoclaim_result else []
                 for msg_id, fields in claimed_messages:
-                    await _handle_compensation_message(db, group, msg_id, fields)
+                    await _handle_compensation_message(db, group, msg_id, fields, engine)
             except Exception as exc:
                 logging.warning("xautoclaim error: %s", exc)
 
@@ -70,7 +70,7 @@ async def compensation_consumer(db) -> None:
                     for _stream, messages in response:
                         for msg_id, fields in messages:
                             await _handle_compensation_message(
-                                db, group, msg_id, fields)
+                                db, group, msg_id, fields, engine)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -83,7 +83,7 @@ async def compensation_consumer(db) -> None:
         logging.info("compensation_consumer stopped")
 
 
-async def _handle_compensation_message(db, group, msg_id, fields) -> None:
+async def _handle_compensation_message(db, group, msg_id, fields, engine=None) -> None:
     event_type = fields.get(b"event_type", b"").decode()
     if event_type != "compensation_triggered":
         await db.xack(STREAM_NAME, group, msg_id)
@@ -105,10 +105,27 @@ async def _handle_compensation_message(db, group, msg_id, fields) -> None:
                        msg_id, delivery_count)
         return
 
-    # Attempt compensation
+    # Attempt compensation via engine
     try:
         order_id = fields.get(b"order_id", b"").decode()
-        if order_id:
+        if order_id and engine is not None:
+            import json as _json
+            from workflow_store import WorkflowStore
+            from checkout_workflow import make_checkout_workflow
+            store = WorkflowStore(db)
+            record = await store.get(order_id)
+            if record and record.get("state") == "COMPENSATING":
+                strategy = record.get("strategy", "saga")
+                context = {
+                    "order_id": order_id,
+                    "user_id": record.get("user_id", ""),
+                    "items": _json.loads(record.get("items", "[]")),
+                    "total_cost": int(record.get("total_cost", "0")),
+                }
+                definition = make_checkout_workflow(strategy)
+                await engine.resume(order_id, definition, context)
+        elif order_id:
+            # Fallback: use old compensation path if no engine (backward compat)
             from grpc_server import run_compensation
             from saga import get_saga
             saga = await get_saga(db, order_id)
