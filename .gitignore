@@ -3,3 +3,5 @@
 wdm-project-benchmark/
 __pycache__/
 .claude/
+.planning/
+docs/
