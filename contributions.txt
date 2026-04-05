@@ -1,3 +1,5 @@
+Brightspace submission contains version including full names, student numbers and email addresses.
+
 Meetings
 25 Feb
 27 Feb
@@ -35,6 +37,3 @@ Clement:
 - Helped draw up the system architecture.
 - Attended the lectures.
 - Figured out how to separate the orchestrator.
-
-Zahari:
-- Only attended the first meeting online.
