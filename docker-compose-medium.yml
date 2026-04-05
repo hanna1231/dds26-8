@@ -1,0 +1,267 @@
+# Medium cluster: ~50 CPUs, shared Redis, multiple service replicas
+# Usage: docker compose -f docker-compose-medium.yml up --build
+# Locust target: http://localhost:8000
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Gateway – 2 CPUs
+  # -------------------------------------------------------------------------
+  gateway:
+    image: nginx:1.25-bookworm
+    restart: always
+    volumes:
+      - ./gateway_nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - order-service
+      - stock-service
+      - payment-service
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Application services – scaled with deploy.replicas
+  # -------------------------------------------------------------------------
+
+  # order-service: 3 replicas x 3 CPUs = 9 CPUs
+  order-service:
+    build: ./order
+    image: order:latest
+    restart: always
+    environment:
+      - GATEWAY_URL=http://gateway:80
+      - ORCHESTRATOR_GRPC_ADDR=orchestrator-service:50053
+      - REDIS_NODE_HOST=shared-redis-0
+      - REDIS_PASSWORD=redis
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      orchestrator-service:
+        condition: service_started
+      shared-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '3'
+
+  # stock-service: 4 replicas x 3 CPUs = 12 CPUs
+  stock-service:
+    build: ./stock
+    image: stock:latest
+    restart: always
+    environment:
+      - REDIS_NODE_HOST=shared-redis-0
+      - REDIS_PASSWORD=redis
+      - COMM_MODE=grpc
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      shared-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: '3'
+
+  # payment-service: 4 replicas x 3 CPUs = 12 CPUs
+  payment-service:
+    build: ./payment
+    image: payment:latest
+    restart: always
+    environment:
+      - REDIS_NODE_HOST=shared-redis-0
+      - REDIS_PASSWORD=redis
+      - COMM_MODE=grpc
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      shared-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: '3'
+
+  # orchestrator-service: 2 replicas x 2 CPUs = 4 CPUs
+  orchestrator-service:
+    build: ./orchestrator
+    image: orchestrator:latest
+    restart: always
+    environment:
+      - STOCK_GRPC_ADDR=stock-service:50051
+      - PAYMENT_GRPC_ADDR=payment-service:50051
+      - REDIS_NODE_HOST=shared-redis-0
+      - REDIS_PASSWORD=redis
+      - SAGA_STALENESS_SECONDS=300
+      - COMM_MODE=grpc
+      - TRANSACTION_PATTERN=saga
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
+    depends_on:
+      stock-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      shared-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Shared 6-node Redis Cluster: 6 x 1.5 CPUs = 9 CPUs
+  # -------------------------------------------------------------------------
+  shared-redis-0:
+    build:
+      context: ./docker/redis-cluster
+      dockerfile: Dockerfile
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-0:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+  shared-redis-1:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-1:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+  shared-redis-2:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-2:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+  shared-redis-3:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-3:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+  shared-redis-4:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-4:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+  shared-redis-5:
+    image: redis-cluster:local
+    restart: always
+    depends_on:
+      shared-redis-0:
+        condition: service_healthy
+      shared-redis-1:
+        condition: service_healthy
+      shared-redis-2:
+        condition: service_healthy
+      shared-redis-3:
+        condition: service_healthy
+      shared-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=shared-redis-0 shared-redis-1 shared-redis-2 shared-redis-3 shared-redis-4 shared-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - shared-redis-data-5:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+
+# Total CPU budget:
+#   gateway:       1 x 2   =  2
+#   order:         3 x 3   =  9
+#   stock:         4 x 3   = 12
+#   payment:       4 x 3   = 12
+#   orchestrator:  2 x 2   =  4
+#   redis:         6 x 1.5 =  9
+#   ─────────────────────────────
+#   TOTAL                  = 48 CPUs (leaves room for locust)
+
+volumes:
+  shared-redis-data-0:
+  shared-redis-data-1:
+  shared-redis-data-2:
+  shared-redis-data-3:
+  shared-redis-data-4:
+  shared-redis-data-5:

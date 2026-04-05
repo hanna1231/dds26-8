@@ -1,0 +1,543 @@
+# Large cluster: ~90 CPUs, per-domain Redis clusters, max service replicas
+# Usage: docker compose -f docker-compose-large.yml up --build
+# Locust target: http://localhost:8000
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Gateway – 2 CPUs
+  # -------------------------------------------------------------------------
+  gateway:
+    image: nginx:1.25-bookworm
+    restart: always
+    volumes:
+      - ./gateway_nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - order-service
+      - stock-service
+      - payment-service
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Application services – heavily scaled
+  # -------------------------------------------------------------------------
+
+  # order-service: 6 replicas x 2 CPUs = 12 CPUs
+  order-service:
+    build: ./order
+    image: order:latest
+    restart: always
+    environment:
+      - GATEWAY_URL=http://gateway:80
+      - ORCHESTRATOR_GRPC_ADDR=orchestrator-service:50053
+      - REDIS_NODE_HOST=order-redis-0
+      - REDIS_PASSWORD=redis
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      orchestrator-service:
+        condition: service_started
+      order-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 6
+      resources:
+        limits:
+          cpus: '2'
+
+  # stock-service: 8 replicas x 2 CPUs = 16 CPUs
+  stock-service:
+    build: ./stock
+    image: stock:latest
+    restart: always
+    environment:
+      - REDIS_NODE_HOST=stock-redis-0
+      - REDIS_PASSWORD=redis
+      - COMM_MODE=grpc
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      stock-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 8
+      resources:
+        limits:
+          cpus: '2'
+
+  # payment-service: 8 replicas x 2 CPUs = 16 CPUs
+  payment-service:
+    build: ./payment
+    image: payment:latest
+    restart: always
+    environment:
+      - REDIS_NODE_HOST=payment-redis-0
+      - REDIS_PASSWORD=redis
+      - COMM_MODE=grpc
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
+    depends_on:
+      payment-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 8
+      resources:
+        limits:
+          cpus: '2'
+
+  # orchestrator-service: 4 replicas x 2 CPUs = 8 CPUs
+  orchestrator-service:
+    build: ./orchestrator
+    image: orchestrator:latest
+    restart: always
+    environment:
+      - STOCK_GRPC_ADDR=stock-service:50051
+      - PAYMENT_GRPC_ADDR=payment-service:50051
+      - REDIS_NODE_HOST=payment-redis-0
+      - REDIS_PASSWORD=redis
+      - SAGA_STALENESS_SECONDS=300
+      - COMM_MODE=grpc
+      - TRANSACTION_PATTERN=saga
+    command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
+    depends_on:
+      stock-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      payment-redis-5:
+        condition: service_healthy
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Order Redis Cluster (6 nodes): 6 x 2 CPUs = 12 CPUs
+  # -------------------------------------------------------------------------
+  order-redis-0:
+    build:
+      context: ./docker/redis-cluster
+      dockerfile: Dockerfile
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-0:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  order-redis-1:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-1:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  order-redis-2:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-2:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  order-redis-3:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-3:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  order-redis-4:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-4:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  order-redis-5:
+    image: redis-cluster:local
+    restart: always
+    depends_on:
+      order-redis-0:
+        condition: service_healthy
+      order-redis-1:
+        condition: service_healthy
+      order-redis-2:
+        condition: service_healthy
+      order-redis-3:
+        condition: service_healthy
+      order-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=order-redis-0 order-redis-1 order-redis-2 order-redis-3 order-redis-4 order-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - order-redis-data-5:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Stock Redis Cluster (6 nodes): 6 x 2 CPUs = 12 CPUs
+  # -------------------------------------------------------------------------
+  stock-redis-0:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-0:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  stock-redis-1:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-1:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  stock-redis-2:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-2:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  stock-redis-3:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-3:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  stock-redis-4:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-4:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  stock-redis-5:
+    image: redis-cluster:local
+    restart: always
+    depends_on:
+      stock-redis-0:
+        condition: service_healthy
+      stock-redis-1:
+        condition: service_healthy
+      stock-redis-2:
+        condition: service_healthy
+      stock-redis-3:
+        condition: service_healthy
+      stock-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=stock-redis-0 stock-redis-1 stock-redis-2 stock-redis-3 stock-redis-4 stock-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - stock-redis-data-5:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  # -------------------------------------------------------------------------
+  # Payment Redis Cluster (6 nodes, shared with orchestrator): 6 x 2 CPUs = 12 CPUs
+  # -------------------------------------------------------------------------
+  payment-redis-0:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-0:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  payment-redis-1:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-1:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  payment-redis-2:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-2:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  payment-redis-3:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-3:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  payment-redis-4:
+    image: redis-cluster:local
+    restart: always
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-4:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+  payment-redis-5:
+    image: redis-cluster:local
+    restart: always
+    depends_on:
+      payment-redis-0:
+        condition: service_healthy
+      payment-redis-1:
+        condition: service_healthy
+      payment-redis-2:
+        condition: service_healthy
+      payment-redis-3:
+        condition: service_healthy
+      payment-redis-4:
+        condition: service_healthy
+    environment:
+      - REDIS_PASSWORD=redis
+      - REDISCLI_AUTH=redis
+      - REDIS_NODES=payment-redis-0 payment-redis-1 payment-redis-2 payment-redis-3 payment-redis-4 payment-redis-5
+      - REDIS_CLUSTER_REPLICAS=1
+      - REDIS_CLUSTER_CREATOR=yes
+      - REDIS_PORT_NUMBER=6379
+    volumes:
+      - payment-redis-data-5:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+
+# Total CPU budget:
+#   gateway:        1 x 2 =  2
+#   order:          6 x 2 = 12
+#   stock:          8 x 2 = 16
+#   payment:        8 x 2 = 16
+#   orchestrator:   4 x 2 =  8
+#   order-redis:    6 x 2 = 12
+#   stock-redis:    6 x 2 = 12
+#   payment-redis:  6 x 2 = 12
+#   ──────────────────────────────
+#   TOTAL                 = 90 CPUs (6 CPUs left for locust)
+
+volumes:
+  order-redis-data-0:
+  order-redis-data-1:
+  order-redis-data-2:
+  order-redis-data-3:
+  order-redis-data-4:
+  order-redis-data-5:
+  stock-redis-data-0:
+  stock-redis-data-1:
+  stock-redis-data-2:
+  stock-redis-data-3:
+  stock-redis-data-4:
+  stock-redis-data-5:
+  payment-redis-data-0:
+  payment-redis-data-1:
+  payment-redis-data-2:
+  payment-redis-data-3:
+  payment-redis-data-4:
+  payment-redis-data-5:
