@@ -80,6 +80,19 @@ async def _prepare_payment(context: dict) -> dict:
     )
 
 
+async def _commit_all_stock(context: dict) -> dict:
+    """2PC commit: finalize stock for all items (deletes hold keys)."""
+    order_id = context["order_id"]
+    for item in context["items"]:
+        await commit_stock(item["item_id"], order_id)
+    return {"success": True, "error_message": ""}
+
+
+async def _commit_payment_fn(context: dict) -> dict:
+    """2PC commit: finalize payment (deletes hold key)."""
+    return await commit_payment(context["user_id"], context["order_id"])
+
+
 async def _abort_all_stock(context: dict) -> dict:
     """2PC abort: abort stock for all items."""
     order_id = context["order_id"]
@@ -134,11 +147,13 @@ def make_checkout_workflow(strategy: str = "saga") -> WorkflowDefinition:
                 name="prepare_stock",
                 action=_prepare_all_stock,
                 compensation=_abort_all_stock,
+                commit=_commit_all_stock,
             ),
             WorkflowStep(
                 name="prepare_payment",
                 action=_prepare_payment,
                 compensation=_abort_payment,
+                commit=_commit_payment_fn,
             ),
         ]
     else:

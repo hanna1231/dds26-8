@@ -45,7 +45,7 @@ services:
     environment:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
     depends_on:
       shared-redis-5:
@@ -58,7 +58,7 @@ services:
     environment:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
     depends_on:
       shared-redis-5:
@@ -74,7 +74,7 @@ services:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
       - SAGA_STALENESS_SECONDS=300
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
       - TRANSACTION_PATTERN=saga
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     depends_on:

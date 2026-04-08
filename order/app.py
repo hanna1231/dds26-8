@@ -12,8 +12,8 @@ import grpc.aio
 from msgspec import msgpack, Struct
 from quart import Quart, jsonify, abort, Response
 
-from orchestrator_pb2 import CheckoutRequest, LineItem
-from orchestrator_pb2_grpc import OrchestratorServiceStub
+from order_pb2 import CheckoutRequest, LineItem
+from order_pb2_grpc import OrchestratorServiceStub
 
 
 DB_ERROR_STR = "DB error"

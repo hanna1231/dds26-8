@@ -120,7 +120,9 @@ class TwoPhaseStrategy:
 
             logger.info("workflow_id=%s committing all steps", workflow_id)
             # --- Phase 2a: Send COMMITs concurrently ---
-            commit_futures = [step.action(context) for step in definition.steps]
+            assert all(s.commit is not None for s in definition.steps), \
+                "2PC workflow steps must define a commit callable"
+            commit_futures = [step.commit(context) for step in definition.steps]
             await asyncio.gather(*commit_futures, return_exceptions=True)
 
             # --- Finalize ---
@@ -161,7 +163,9 @@ class TwoPhaseStrategy:
         """
         if state == "COMMITTING":
             # Re-send commits (phase 2a)
-            commit_futures = [step.action(context) for step in definition.steps]
+            assert all(s.commit is not None for s in definition.steps), \
+                "2PC workflow steps must define a commit callable"
+            commit_futures = [step.commit(context) for step in definition.steps]
             await asyncio.gather(*commit_futures, return_exceptions=True)
 
             self._validate_transition("COMMITTING", "COMMITTED")

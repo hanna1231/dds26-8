@@ -4,7 +4,6 @@ import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from quart import Quart, jsonify
 from grpc_server import serve_grpc, stop_grpc_server
-from transport import COMM_MODE
 from recovery import recover_incomplete_workflows
 from consumers import setup_consumer_groups, compensation_consumer, audit_consumer, init_stop_event
 from events import get_dropped_events, STREAM_NAME, DEAD_LETTERS_STREAM
@@ -13,12 +12,13 @@ from workflow_engine import WorkflowEngine
 
 app = Quart("orchestrator-service")
 db = None
+queue_db = None
 _stop_event = None
 
 
 @app.before_serving
 async def startup():
-    global db
+    global db, queue_db
     node_host = os.environ['REDIS_NODE_HOST']
     node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
     db = RedisCluster(
@@ -28,21 +28,32 @@ async def startup():
         require_full_coverage=True,
     )
     await db.initialize()
+
+    # Separate queue cluster for cross-service Redis Stream messaging.
+    # Falls back to the domain cluster when QUEUE_REDIS_HOST is unset.
+    queue_host = os.environ.get('QUEUE_REDIS_HOST', node_host)
+    queue_port = int(os.environ.get('QUEUE_REDIS_PORT', str(node_port)))
+    if queue_host == node_host and queue_port == node_port:
+        queue_db = db
+    else:
+        queue_db = RedisCluster(
+            startup_nodes=[ClusterNode(queue_host, queue_port)],
+            password=os.environ['REDIS_PASSWORD'],
+            decode_responses=False,
+            require_full_coverage=True,
+        )
+        await queue_db.initialize()
+
     store = WorkflowStore(db)
     engine = WorkflowEngine(store=store, db=db)
-    if COMM_MODE == "queue":
-        from queue_client import init_queue_client
-        from reply_listener import setup_reply_consumer_group, reply_listener
-        init_queue_client(db)
-        await setup_reply_consumer_group(db)
-    else:
-        from client import init_grpc_clients
-        await init_grpc_clients()
+    from queue_client import init_queue_client
+    from reply_listener import setup_reply_consumer_group, reply_listener
+    init_queue_client(queue_db)
+    await setup_reply_consumer_group(queue_db)
     await recover_incomplete_workflows(db, engine)
     await setup_consumer_groups(db)
     _stop_event = init_stop_event()
-    if COMM_MODE == "queue":
-        app.add_background_task(reply_listener, db, _stop_event)
+    app.add_background_task(reply_listener, queue_db, _stop_event)
     app.add_background_task(serve_grpc, db, engine)
     app.add_background_task(compensation_consumer, db, engine)
     app.add_background_task(audit_consumer, db)
@@ -53,12 +64,10 @@ async def shutdown():
     if _stop_event:
         _stop_event.set()
     await stop_grpc_server()
-    if COMM_MODE == "queue":
-        from queue_client import close_queue_client
-        close_queue_client()
-    else:
-        from client import close_grpc_clients
-        await close_grpc_clients()
+    from queue_client import close_queue_client
+    close_queue_client()
+    if queue_db is not db:
+        await queue_db.aclose()
     await db.aclose()
 
 

@@ -14,11 +14,13 @@ from typing import Callable, Awaitable, Any, Literal
 
 @dataclass
 class WorkflowStep:
-    """A named pair of async callables: forward action and compensation."""
+    """A named set of async callables: forward action, compensation, and
+    optional commit (used by 2PC phase 2a to finalize a prepared step)."""
 
     name: str
     action: Callable[..., Awaitable[Any]]
     compensation: Callable[..., Awaitable[Any]]
+    commit: Callable[..., Awaitable[Any]] | None = None
 
 
 @dataclass

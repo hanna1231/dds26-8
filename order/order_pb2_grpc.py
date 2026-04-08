@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import orchestrator_pb2 as orchestrator__pb2
+import order_pb2 as order__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in orchestrator_pb2_grpc.py depends on'
+        + ' but the generated code in order_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -36,8 +36,8 @@ class OrchestratorServiceStub(object):
         """
         self.StartCheckout = channel.unary_unary(
                 '/orchestrator.OrchestratorService/StartCheckout',
-                request_serializer=orchestrator__pb2.CheckoutRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.CheckoutResponse.FromString,
+                request_serializer=order__pb2.CheckoutRequest.SerializeToString,
+                response_deserializer=order__pb2.CheckoutResponse.FromString,
                 _registered_method=True)
 
 
@@ -55,8 +55,8 @@ def add_OrchestratorServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'StartCheckout': grpc.unary_unary_rpc_method_handler(
                     servicer.StartCheckout,
-                    request_deserializer=orchestrator__pb2.CheckoutRequest.FromString,
-                    response_serializer=orchestrator__pb2.CheckoutResponse.SerializeToString,
+                    request_deserializer=order__pb2.CheckoutRequest.FromString,
+                    response_serializer=order__pb2.CheckoutResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -84,8 +84,8 @@ class OrchestratorService(object):
             request,
             target,
             '/orchestrator.OrchestratorService/StartCheckout',
-            orchestrator__pb2.CheckoutRequest.SerializeToString,
-            orchestrator__pb2.CheckoutResponse.FromString,
+            order__pb2.CheckoutRequest.SerializeToString,
+            order__pb2.CheckoutResponse.FromString,
             options,
             channel_credentials,
             insecure,

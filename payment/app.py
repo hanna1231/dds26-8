@@ -9,22 +9,21 @@ from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 from msgspec import msgpack
 from quart import Quart, jsonify, abort, Response
-from grpc_server import serve_grpc, stop_grpc_server
 from operations import UserValue
 
 DB_ERROR_STR = "DB error"
-COMM_MODE = os.environ.get("COMM_MODE", "grpc")
 
 
 app = Quart("payment-service")
 
 db = None
+queue_db = None
 _stop_event = None
 
 
 @app.before_serving
 async def startup():
-    global db, _stop_event
+    global db, queue_db, _stop_event
     node_host = os.environ['REDIS_NODE_HOST']
     node_port = int(os.environ.get('REDIS_NODE_PORT', '6379'))
     db = RedisCluster(
@@ -34,20 +33,34 @@ async def startup():
         require_full_coverage=True,
     )
     await db.initialize()
-    app.add_background_task(serve_grpc, db)
 
-    if COMM_MODE == "queue":
-        from queue_consumer import setup_command_consumer_group, queue_consumer
-        _stop_event = asyncio.Event()
-        await setup_command_consumer_group(db)
-        app.add_background_task(queue_consumer, db, db, _stop_event)
+    # Separate queue cluster for cross-service Redis Stream messaging.
+    # Falls back to the domain cluster when QUEUE_REDIS_HOST is unset.
+    queue_host = os.environ.get('QUEUE_REDIS_HOST', node_host)
+    queue_port = int(os.environ.get('QUEUE_REDIS_PORT', str(node_port)))
+    if queue_host == node_host and queue_port == node_port:
+        queue_db = db
+    else:
+        queue_db = RedisCluster(
+            startup_nodes=[ClusterNode(queue_host, queue_port)],
+            password=os.environ['REDIS_PASSWORD'],
+            decode_responses=False,
+            require_full_coverage=True,
+        )
+        await queue_db.initialize()
+
+    from queue_consumer import setup_command_consumer_group, queue_consumer
+    _stop_event = asyncio.Event()
+    await setup_command_consumer_group(queue_db)
+    app.add_background_task(queue_consumer, db, queue_db, _stop_event)
 
 
 @app.after_serving
 async def shutdown():
     if _stop_event:
         _stop_event.set()
-    await stop_grpc_server()
+    if queue_db is not db:
+        await queue_db.aclose()
     await db.aclose()
 
 

@@ -6,6 +6,7 @@ module functions, and publishes results to the shared reply stream.
 """
 import asyncio
 import logging
+import socket
 
 import msgspec.json
 from redis.exceptions import ResponseError
@@ -15,7 +16,9 @@ import operations
 COMMAND_STREAM = "{queue}:stock:commands"
 REPLY_STREAM = "{queue}:replies"
 CONSUMER_GROUP = "stock-consumers"
-CONSUMER_NAME = "stock-1"
+# Unique per container: Docker assigns a distinct hostname to each replica.
+# Critical for distributing work across replicas in the consumer group.
+CONSUMER_NAME = f"stock-{socket.gethostname()}"
 POLL_INTERVAL_MS = 1000
 BATCH_SIZE = 10
 STREAM_MAXLEN = 1_000

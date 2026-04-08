@@ -57,7 +57,7 @@ services:
     environment:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
     depends_on:
       shared-redis-5:
@@ -76,7 +76,7 @@ services:
     environment:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2 --log-level info
     depends_on:
       shared-redis-5:
@@ -87,7 +87,7 @@ services:
         limits:
           cpus: '3'
 
-  # orchestrator-service: 2 replicas x 2 CPUs = 4 CPUs
+  # orchestrator-service: 1 replica (queue-mode reply routing bug prevents scaling)
   orchestrator-service:
     build: ./orchestrator
     image: orchestrator:latest
@@ -98,7 +98,7 @@ services:
       - REDIS_NODE_HOST=shared-redis-0
       - REDIS_PASSWORD=redis
       - SAGA_STALENESS_SECONDS=300
-      - COMM_MODE=grpc
+      - COMM_MODE=queue
       - TRANSACTION_PATTERN=saga
     command: uvicorn app:app --host 0.0.0.0 --port 5000 --workers 1 --log-level info
     depends_on:
@@ -109,7 +109,7 @@ services:
       shared-redis-5:
         condition: service_healthy
     deploy:
-      replicas: 2
+      replicas: 1
       resources:
         limits:
           cpus: '2'
